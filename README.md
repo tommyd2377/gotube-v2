@@ -170,6 +170,40 @@ After deploying the frontend and Worker on free tiers:
 
 The `/tv` route is structured so it can later be wrapped in an Android WebView Fire TV app.
 
+## Fire TV APK
+
+The repo includes a native Android WebView wrapper in `apps/firetv` for sideloading GoTube as a Fire TV app. It packages the built Vite app, launches the `/tv` route, and maps Fire TV remote keys to the existing TV keyboard controls.
+
+Build a debug APK:
+
+```bash
+GOTUBE_API_BASE_URL="https://your-worker.example.com/api" npm run build:firetv
+```
+
+The output is:
+
+```text
+apps/firetv/build/outputs/gotube-firetv-debug.apk
+```
+
+Install and launch on a Fire TV with ADB debugging enabled:
+
+```bash
+adb connect <fire-tv-ip>:5555
+npm run install:firetv
+adb shell monkey -p me.thomasdevito.gotube.firetv -c android.intent.category.LAUNCHER 1
+```
+
+For all future Fire TV app updates, install over the existing app with `adb install -r` or `npm run install:firetv`. Do not uninstall the Fire TV app and do not clear app storage, because the private sync key is stored in the app WebView storage and would need to be entered again.
+
+If you prefer to wrap a deployed frontend instead of bundling the local static build:
+
+```bash
+GOTUBE_TV_URL="https://your-pages.example.com/tv" npm run build:firetv
+```
+
+`GOTUBE_API_BASE_URL` is not a secret. The private sync key is still entered in GoTube Settings and stored only in the Fire TV app WebView storage.
+
 ## Playback Notes
 
 GoTube embeds only the selected video with the YouTube IFrame Player API using `youtube-nocookie.com`, `rel=0`, `modestbranding=1`, and a GoTube-owned “Back to GoTube” control. GoTube does not render sidebars, recommendations, comments, or autoplay discovery UI.

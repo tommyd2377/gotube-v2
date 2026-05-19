@@ -7,6 +7,7 @@ interface VideoCardProps {
   video: Video;
   watched?: WatchedVideo;
   tvMode?: boolean;
+  tvActionsActive?: boolean;
   showRemove?: boolean;
   onPlay: (video: Video) => void;
   onChannelOpen?: (video: Video) => void | Promise<void>;
@@ -19,6 +20,7 @@ export function VideoCard({
   video,
   watched,
   tvMode = false,
+  tvActionsActive = false,
   showRemove = false,
   onPlay,
   onChannelOpen,
@@ -36,13 +38,20 @@ export function VideoCard({
     : progressSeconds > 10
       ? `Resume ${formatDuration(Math.floor(progressSeconds))}`
       : null;
+  const tvActionFocusable = tvMode && tvActionsActive ? "true" : undefined;
+  const tvActionTabIndex = tvMode ? (tvActionsActive ? 0 : -1) : undefined;
 
   return (
     <article
       className={tvMode ? "videoCard tvVideoCard" : "videoCard"}
       data-tv-focusable={tvMode ? "true" : undefined}
+      data-tv-card={tvMode ? "true" : undefined}
+      data-tv-card-id={tvMode ? video.youtube_video_id : undefined}
+      data-tv-actions-active={tvMode && tvActionsActive ? "true" : undefined}
       tabIndex={tvMode ? 0 : undefined}
       role={tvMode ? "button" : undefined}
+      aria-label={tvMode ? `${video.title}. Press select for actions.` : undefined}
+      aria-expanded={tvMode ? tvActionsActive : undefined}
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           onPlay(video);
@@ -50,7 +59,7 @@ export function VideoCard({
       }}
     >
       <div className="thumbFrame">
-        <button className="thumbButton" onClick={() => onPlay(video)} aria-label={`Play ${video.title}`}>
+        <button className="thumbButton" onClick={() => onPlay(video)} aria-label={`Play ${video.title}`} tabIndex={tvMode ? -1 : undefined}>
           <div className="thumbFallback">GoTube</div>
           {video.thumbnail_url ? (
             <img
@@ -103,24 +112,48 @@ export function VideoCard({
           </div>
         ) : null}
         <div className="buttonRow">
-          <button className="primaryButton" onClick={() => onPlay(video)} data-tv-focusable={tvMode ? "true" : undefined}>
+          <button
+            className="primaryButton"
+            onClick={() => onPlay(video)}
+            data-tv-focusable={tvActionFocusable}
+            data-tv-card-action={tvMode ? "true" : undefined}
+            tabIndex={tvActionTabIndex}
+          >
             <Play aria-hidden="true" />
             Play
           </button>
           {onWatchLater ? (
-            <button className="secondaryButton" onClick={() => onWatchLater(video)} data-tv-focusable={tvMode ? "true" : undefined}>
+            <button
+              className="secondaryButton"
+              onClick={() => onWatchLater(video)}
+              data-tv-focusable={tvActionFocusable}
+              data-tv-card-action={tvMode ? "true" : undefined}
+              tabIndex={tvActionTabIndex}
+            >
               <Clock aria-hidden="true" />
-              Watch Later
+              {tvMode ? "Later" : "Watch Later"}
             </button>
           ) : null}
           {onMarkWatched ? (
-            <button className="secondaryButton" onClick={() => onMarkWatched(video)} data-tv-focusable={tvMode ? "true" : undefined}>
+            <button
+              className="secondaryButton"
+              onClick={() => onMarkWatched(video)}
+              data-tv-focusable={tvActionFocusable}
+              data-tv-card-action={tvMode ? "true" : undefined}
+              tabIndex={tvActionTabIndex}
+            >
               <Check aria-hidden="true" />
-              Mark Watched
+              {tvMode ? "Seen" : "Mark Watched"}
             </button>
           ) : null}
           {showRemove && onRemove ? (
-            <button className="dangerButton" onClick={() => onRemove(video)} data-tv-focusable={tvMode ? "true" : undefined}>
+            <button
+              className="dangerButton"
+              onClick={() => onRemove(video)}
+              data-tv-focusable={tvActionFocusable}
+              data-tv-card-action={tvMode ? "true" : undefined}
+              tabIndex={tvActionTabIndex}
+            >
               Remove
             </button>
           ) : null}

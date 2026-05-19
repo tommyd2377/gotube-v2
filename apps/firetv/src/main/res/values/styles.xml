@@ -1,0 +1,9 @@
+<resources>
+  <style name="GoTubeTheme" parent="@android:style/Theme.Material.NoActionBar">
+    <item name="android:windowNoTitle">true</item>
+    <item name="android:windowActionBar">false</item>
+    <item name="android:windowFullscreen">true</item>
+    <item name="android:windowBackground">@color/gotube_background</item>
+    <item name="android:colorAccent">#60A5FA</item>
+  </style>
+</resources>

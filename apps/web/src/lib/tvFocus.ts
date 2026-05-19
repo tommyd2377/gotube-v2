@@ -6,6 +6,12 @@ function isVisible(element: HTMLElement) {
   return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
 }
 
+function overlapRatio(startA: number, endA: number, startB: number, endB: number) {
+  const overlap = Math.max(0, Math.min(endA, endB) - Math.max(startA, startB));
+  const smallerSpan = Math.min(endA - startA, endB - startB);
+  return smallerSpan > 0 ? overlap / smallerSpan : 0;
+}
+
 export function getTvFocusables(root: Document | HTMLElement = document) {
   return Array.from(root.querySelectorAll<HTMLElement>("[data-tv-focusable='true']")).filter(
     (element) => !element.hasAttribute("disabled") && isVisible(element)
@@ -38,6 +44,7 @@ export function focusNearestTvElement(direction: TvDirectionKey, root: Document 
     x: currentRect.left + currentRect.width / 2,
     y: currentRect.top + currentRect.height / 2
   };
+  const horizontalMove = direction === "ArrowRight" || direction === "ArrowLeft";
 
   const candidates = focusables
     .filter((element) => element !== current)
@@ -51,14 +58,24 @@ export function focusNearestTvElement(direction: TvDirectionKey, root: Document 
       const dy = center.y - currentCenter.y;
       const primary =
         direction === "ArrowRight" ? dx : direction === "ArrowLeft" ? -dx : direction === "ArrowDown" ? dy : -dy;
-      const secondary = direction === "ArrowRight" || direction === "ArrowLeft" ? Math.abs(dy) : Math.abs(dx);
+      const secondary = horizontalMove ? Math.abs(dy) : Math.abs(dx);
+      const laneOverlap = horizontalMove
+        ? overlapRatio(currentRect.top, currentRect.bottom, rect.top, rect.bottom)
+        : overlapRatio(currentRect.left, currentRect.right, rect.left, rect.right);
+      const laneSlack = horizontalMove
+        ? Math.max(24, Math.min(currentRect.height, rect.height) * 0.4)
+        : Math.max(24, Math.min(currentRect.width, rect.width) * 0.25);
+      const inLane = laneOverlap >= 0.35 || secondary <= laneSlack;
 
-      return { element, primary, secondary };
+      return { element, inLane, primary, secondary };
     })
-    .filter((candidate) => candidate.primary > 8)
-    .sort((a, b) => a.primary * 3 + a.secondary - (b.primary * 3 + b.secondary));
+    .filter((candidate) => candidate.primary > 8);
 
-  const next = candidates[0]?.element;
+  const laneCandidates = candidates.filter((candidate) => candidate.inLane);
+  const candidatePool = laneCandidates.length ? laneCandidates : candidates;
+  candidatePool.sort((a, b) => a.primary * 2 + a.secondary - (b.primary * 2 + b.secondary));
+
+  const next = candidatePool[0]?.element;
   if (!next) {
     return false;
   }

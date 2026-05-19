@@ -44,7 +44,7 @@ import { focusFirstTvElement, focusNearestTvElement, focusTvElement, type TvDire
 import type { Channel, SearchResult, SearchVideoResult, SettingsShape, Video, WatchedVideo, WatchLaterItem } from "./lib/types";
 
 type TabId = "feed" | "watchLater" | "search" | "channels" | "settings";
-type TvSection = "feed" | "watchLater" | "search" | "channels" | "channelFeed";
+type TvSection = "feed" | "watchLater" | "search" | "channels" | "channelFeed" | "settings";
 type HealthState = "checking" | "ok" | "error";
 type ChannelFeedTarget = Pick<Channel, "youtube_channel_id" | "title" | "description" | "thumbnail_url" | "custom_url" | "last_checked_at">;
 
@@ -428,6 +428,105 @@ function PersonalFooter({ tvMode = false }: { tvMode?: boolean }) {
         Made with <span aria-hidden="true">&hearts;</span> in NYC
       </div>
     </footer>
+  );
+}
+
+type TvKeyboardTarget = "search" | "syncKey";
+
+const tvKeyboardRows = [
+  ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+  ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+  ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
+  ["z", "x", "c", "v", "b", "n", "m"],
+  ["-", "_", ".", "@", "/", ":", "+", "=", "#", "!", "?", "&"]
+];
+
+function TvKeyboardOverlay({
+  title,
+  value,
+  password = false,
+  onChange,
+  onClose
+}: {
+  title: string;
+  value: string;
+  password?: boolean;
+  onChange: (value: string) => void;
+  onClose: () => void;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [shift, setShift] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const displayValue = password && !showPassword ? "•".repeat(value.length) : value;
+
+  useEffect(() => {
+    window.setTimeout(() => {
+      if (rootRef.current) {
+        focusFirstTvElement(rootRef.current);
+      }
+    }, 50);
+  }, []);
+
+  function addCharacter(character: string) {
+    onChange(`${value}${character}`);
+  }
+
+  return (
+    <div className="tvKeyboardBackdrop">
+      <div className="tvKeyboardOverlay" ref={rootRef} role="dialog" aria-label={title}>
+        <div className="tvKeyboardHeader">
+          <div>
+            <p className="eyebrow">{title}</p>
+            <div className="tvKeyboardValue" aria-label={title}>
+              {displayValue || <span>{password ? "Sync key" : "Search"}</span>}
+            </div>
+          </div>
+          <button className="secondaryButton" type="button" onClick={onClose} data-tv-focusable="true">
+            Done
+          </button>
+        </div>
+
+        <div className="tvKeyboardRows">
+          {tvKeyboardRows.map((row) => (
+            <div className="tvKeyboardRow" key={row.join("")}>
+              {row.map((key) => {
+                const character = shift && /^[a-z]$/.test(key) ? key.toUpperCase() : key;
+                return (
+                  <button
+                    className="tvKeyboardKey"
+                    key={key}
+                    type="button"
+                    onClick={() => addCharacter(character)}
+                    data-tv-focusable="true"
+                  >
+                    {character}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+          <div className="tvKeyboardRow tvKeyboardActions">
+            <button className={shift ? "tvKeyboardKey active" : "tvKeyboardKey"} type="button" onClick={() => setShift((value) => !value)} data-tv-focusable="true">
+              Shift
+            </button>
+            <button className="tvKeyboardKey wide" type="button" onClick={() => addCharacter(" ")} data-tv-focusable="true">
+              Space
+            </button>
+            <button className="tvKeyboardKey" type="button" onClick={() => onChange(value.slice(0, -1))} data-tv-focusable="true">
+              Delete
+            </button>
+            <button className="tvKeyboardKey" type="button" onClick={() => onChange("")} data-tv-focusable="true">
+              Clear
+            </button>
+            {password ? (
+              <button className="tvKeyboardKey" type="button" onClick={() => setShowPassword((value) => !value)} data-tv-focusable="true">
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1051,6 +1150,9 @@ function TvApp() {
   const [channelFeedCursor, setChannelFeedCursor] = useState<string | null>(null);
   const [channelFeedHasMore, setChannelFeedHasMore] = useState(false);
   const [channelFeedLoading, setChannelFeedLoading] = useState(false);
+  const [syncKeyDraft, setSyncKeyDraft] = useState(getSyncKey());
+  const [tvKeyboardTarget, setTvKeyboardTarget] = useState<TvKeyboardTarget | null>(null);
+  const [activeActionCardId, setActiveActionCardId] = useState<string | null>(null);
   const lastTvFocusRef = useRef<HTMLElement | null>(null);
 
   const watchLaterVideos = useMemo(() => data.watchLater.map((item) => item.video), [data.watchLater]);
@@ -1071,9 +1173,64 @@ function TvApp() {
     }
   }, [section]);
 
+  const findTvCard = useCallback((cardId: string | null) => {
+    if (!cardId) {
+      return null;
+    }
+    return (
+      Array.from(document.querySelectorAll<HTMLElement>("[data-tv-card='true']")).find(
+        (card) => card.dataset.tvCardId === cardId
+      ) ?? null
+    );
+  }, []);
+
+  const enterTvCardActions = useCallback((card: HTMLElement) => {
+    const cardId = card.dataset.tvCardId;
+    if (!cardId) {
+      return false;
+    }
+    setActiveActionCardId(cardId);
+    window.setTimeout(() => {
+      const activeCard = findTvCard(cardId);
+      if (activeCard) {
+        focusFirstTvElement(activeCard);
+      }
+    }, 40);
+    return true;
+  }, [findTvCard]);
+
+  const exitTvCardActions = useCallback((cardId: string | null = activeActionCardId) => {
+    const card = findTvCard(cardId);
+    setActiveActionCardId(null);
+    if (card) {
+      focusTvElement(card);
+    }
+    return Boolean(card);
+  }, [activeActionCardId, findTvCard]);
+
   useEffect(() => {
     window.setTimeout(() => focusSectionStart(section), 60);
   }, [focusSectionStart, section]);
+
+  useEffect(() => {
+    if (!activeActionCardId) {
+      return;
+    }
+
+    function onFocusIn(event: FocusEvent) {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      const card = target.closest<HTMLElement>("[data-tv-card='true']");
+      if (card?.dataset.tvCardId !== activeActionCardId) {
+        setActiveActionCardId(null);
+      }
+    }
+
+    window.addEventListener("focusin", onFocusIn);
+    return () => window.removeEventListener("focusin", onFocusIn);
+  }, [activeActionCardId]);
 
   async function loadChannelFeed(channel: Channel, before: string | null = null) {
     setChannelFeedLoading(true);
@@ -1098,6 +1255,7 @@ function TvApp() {
   }
 
   async function openChannel(channel: Channel) {
+    setActiveActionCardId(null);
     setSelectedChannel(channel);
     setChannelFeed([]);
     setChannelFeedCursor(null);
@@ -1107,6 +1265,7 @@ function TvApp() {
   }
 
   function backToChannels() {
+    setActiveActionCardId(null);
     setSelectedChannel(null);
     setChannelFeed([]);
     setChannelFeedCursor(null);
@@ -1138,6 +1297,7 @@ function TvApp() {
   }
 
   function goToSection(nextSection: Exclude<TvSection, "channelFeed">) {
+    setActiveActionCardId(null);
     setSelectedChannel(null);
     setChannelFeed([]);
     setChannelFeedCursor(null);
@@ -1151,12 +1311,72 @@ function TvApp() {
         return;
       }
 
+      if (tvKeyboardTarget) {
+        if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) {
+          event.preventDefault();
+          const root = document.querySelector<HTMLElement>(".tvKeyboardOverlay");
+          if (root) {
+            focusNearestTvElement(event.key as TvDirectionKey, root);
+          }
+          return;
+        }
+
+        if (event.key === "Enter") {
+          const active = document.activeElement as HTMLElement | null;
+          if (active?.dataset.tvFocusable === "true") {
+            event.preventDefault();
+            active.click();
+          }
+          return;
+        }
+
+        if (event.key === "Escape" || event.key === "Backspace") {
+          event.preventDefault();
+          setTvKeyboardTarget(null);
+          return;
+        }
+      }
+
+      const arrowKeys = ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"];
       const target = event.target;
-      if (target instanceof HTMLInputElement && !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape"].includes(event.key)) {
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const activeCard = active?.closest<HTMLElement>("[data-tv-card='true']") ?? null;
+      const activeCardId = activeCard?.dataset.tvCardId ?? null;
+      const activeIsCardAction = active?.dataset.tvCardAction === "true" && activeCardId === activeActionCardId;
+
+      if (target instanceof HTMLInputElement && !arrowKeys.includes(event.key)) {
         return;
       }
 
-      if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) {
+      if (activeIsCardAction && arrowKeys.includes(event.key)) {
+        event.preventDefault();
+
+        if (event.key === "ArrowUp") {
+          exitTvCardActions(activeCardId);
+          return;
+        }
+
+        if (event.key === "ArrowDown") {
+          if (activeCard) {
+            setActiveActionCardId(null);
+            focusTvElement(activeCard);
+            window.setTimeout(() => {
+              const root = document.querySelector<HTMLElement>(".tvShell");
+              if (root) {
+                focusNearestTvElement("ArrowDown", root);
+              }
+            }, 0);
+          }
+          return;
+        }
+
+        if (activeCard) {
+          focusNearestTvElement(event.key as TvDirectionKey, activeCard);
+        }
+        return;
+      }
+
+      if (arrowKeys.includes(event.key)) {
         event.preventDefault();
         const root = document.querySelector<HTMLElement>(".tvShell");
         if (root) {
@@ -1165,10 +1385,12 @@ function TvApp() {
       }
 
       if (event.key === "Enter") {
-        const active = document.activeElement as HTMLElement | null;
         if (active instanceof HTMLInputElement) {
+          return;
+        }
+        if (active?.dataset.tvCard === "true") {
           event.preventDefault();
-          active.form?.requestSubmit();
+          enterTvCardActions(active);
           return;
         }
         if (active?.dataset.tvFocusable === "true") {
@@ -1179,6 +1401,9 @@ function TvApp() {
 
       if (event.key === "Escape" || event.key === "Backspace") {
         event.preventDefault();
+        if (activeActionCardId && exitTvCardActions(activeActionCardId)) {
+          return;
+        }
         if (section === "channelFeed") {
           backToChannels();
           return;
@@ -1193,7 +1418,7 @@ function TvApp() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [focusSectionStart, section, selectedVideo]);
+  }, [activeActionCardId, enterTvCardActions, exitTvCardActions, focusSectionStart, section, selectedVideo, tvKeyboardTarget]);
 
   async function onSearch(event: FormEvent) {
     event.preventDefault();
@@ -1208,6 +1433,12 @@ function TvApp() {
     } catch (cause) {
       data.setNotice(describeError(cause));
     }
+  }
+
+  async function saveTvSyncKey(event: FormEvent) {
+    event.preventDefault();
+    setSyncKey(syncKeyDraft);
+    await data.refreshRemote(data.settings);
   }
 
   return (
@@ -1228,13 +1459,26 @@ function TvApp() {
                     ? "Search"
                     : section === "channelFeed"
                       ? selectedChannel?.title ?? "Channel"
-                      : "Channels"}
+                      : section === "settings"
+                        ? "Settings"
+                        : "Channels"}
             </h1>
           </div>
         </button>
-        <a href="/" className="secondaryButton" data-tv-focusable="true">
-          Standard
-        </a>
+        <div className="tvHeaderActions">
+          <a href="/" className="secondaryButton" data-tv-focusable="true">
+            Standard
+          </a>
+          <button
+            className="secondaryButton"
+            type="button"
+            onClick={() => goToSection("settings")}
+            data-tv-focusable="true"
+            data-tv-section="settings"
+          >
+            Settings
+          </button>
+        </div>
       </header>
 
       <nav className="tvNav">
@@ -1285,6 +1529,7 @@ function TvApp() {
                     video={video}
                     watched={watchedById.get(video.youtube_video_id)}
                     tvMode
+                    tvActionsActive={activeActionCardId === video.youtube_video_id}
                     onPlay={openTvVideo}
                     onWatchLater={data.addWatchLater}
                     onMarkWatched={data.markWatched}
@@ -1319,6 +1564,7 @@ function TvApp() {
                   video={video}
                   watched={watchedById.get(video.youtube_video_id)}
                   tvMode
+                  tvActionsActive={activeActionCardId === video.youtube_video_id}
                   showRemove
                   onPlay={openTvVideo}
                   onRemove={data.removeWatchLater}
@@ -1334,7 +1580,14 @@ function TvApp() {
         {section === "search" ? (
           <section>
             <form className="tvSearch" onSubmit={onSearch}>
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search videos" data-tv-focusable="true" />
+              <input
+                value={query}
+                onFocus={() => setTvKeyboardTarget("search")}
+                onClick={() => setTvKeyboardTarget("search")}
+                placeholder="Search videos"
+                readOnly
+                data-tv-focusable="true"
+              />
               <button className="primaryButton" type="submit" data-tv-focusable="true">
                 <Search aria-hidden="true" />
                 Search
@@ -1349,6 +1602,7 @@ function TvApp() {
                     video={videoFromSearch(result)}
                     watched={watchedById.get(result.youtube_video_id)}
                     tvMode
+                    tvActionsActive={activeActionCardId === result.youtube_video_id}
                     onPlay={openTvVideo}
                     onWatchLater={data.addWatchLater}
                   />
@@ -1425,6 +1679,7 @@ function TvApp() {
                       video={video}
                       watched={watchedById.get(video.youtube_video_id)}
                       tvMode
+                      tvActionsActive={activeActionCardId === video.youtube_video_id}
                       onPlay={openTvVideo}
                       onWatchLater={data.addWatchLater}
                       onMarkWatched={data.markWatched}
@@ -1450,6 +1705,41 @@ function TvApp() {
             )}
           </section>
         ) : null}
+
+        {section === "settings" ? (
+          <section className="tvSettings">
+            <form className="tvSettingsPanel" onSubmit={saveTvSyncKey}>
+              <label className="tvFieldLabel">
+                <span>Private Sync Key</span>
+                <input
+                  type="password"
+                  value={syncKeyDraft}
+                  onFocus={() => setTvKeyboardTarget("syncKey")}
+                  onClick={() => setTvKeyboardTarget("syncKey")}
+                  placeholder="Enter GOTUBE_SYNC_KEY"
+                  autoComplete="current-password"
+                  readOnly
+                  data-tv-focusable="true"
+                />
+              </label>
+              <button className="primaryButton" type="submit" data-tv-focusable="true">
+                <Check aria-hidden="true" />
+                Save Key
+              </button>
+            </form>
+
+            <div className="tvSettingsPanel">
+              <h3>Backend Status</h3>
+              <p className={data.health === "ok" ? "statusOk" : "statusError"}>
+                {data.health === "checking" ? "Checking" : data.health === "ok" ? "Healthy" : "Unavailable"}
+              </p>
+              <button className="secondaryButton" onClick={data.refreshHealth} data-tv-focusable="true">
+                <HeartPulse aria-hidden="true" />
+                Check
+              </button>
+            </div>
+          </section>
+        ) : null}
       </main>
 
       <footer className="tvFooter">
@@ -1458,6 +1748,16 @@ function TvApp() {
       </footer>
 
       <PersonalFooter tvMode />
+
+      {tvKeyboardTarget ? (
+        <TvKeyboardOverlay
+          title={tvKeyboardTarget === "search" ? "Search" : "Private Sync Key"}
+          value={tvKeyboardTarget === "search" ? query : syncKeyDraft}
+          password={tvKeyboardTarget === "syncKey"}
+          onChange={tvKeyboardTarget === "search" ? setQuery : setSyncKeyDraft}
+          onClose={() => setTvKeyboardTarget(null)}
+        />
+      ) : null}
 
       {selectedVideo ? <PlayerOverlay video={selectedVideo} tvMode onClose={closeTvVideo} onProgress={data.saveProgress} /> : null}
     </div>

@@ -844,6 +844,34 @@ textarea::placeholder {
   border-radius: 8px;
 }
 
+.playerSeekFeedback {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  gap: 3px;
+  place-items: center;
+  min-width: 112px;
+  min-height: 74px;
+  color: #fff;
+  background: rgba(2, 5, 11, 0.72);
+  border: 1px solid rgba(147, 197, 253, 0.45);
+  border-radius: 8px;
+  transform: translate(-50%, -50%);
+}
+
+.playerSeekFeedback strong {
+  font-size: 1.18rem;
+  font-weight: 900;
+}
+
+.playerSeekFeedback span {
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
 .playerSurface {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -900,19 +928,60 @@ textarea::placeholder {
   overflow-wrap: anywhere;
 }
 
+.playerTvControls {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 960px);
+}
+
+.playerTvProgress {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: #cbd5e1;
+  font-size: 0.85rem;
+  font-weight: 760;
+}
+
+.playerTvProgressTrack {
+  height: 5px;
+  overflow: hidden;
+  background: #1b2943;
+  border-radius: 999px;
+}
+
+.playerTvProgressTrack span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue), var(--blue-bright));
+  border-radius: inherit;
+}
+
+.playerTvButtonRow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.playerTvButtonRowDirect {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .tvShell {
   min-height: 100vh;
-  padding: 32px;
+  padding: 18px;
   color: var(--text);
   background:
     linear-gradient(180deg, rgba(36, 49, 79, 0.48), rgba(2, 5, 11, 0) 230px),
     var(--bg);
-  scroll-padding-block: 32px;
+  scroll-padding-block: 18px;
   overscroll-behavior: contain;
+  overflow-x: hidden;
 }
 
 .tvShell [data-tv-focusable="true"] {
-  scroll-margin: 32px;
+  scroll-margin: 18px;
   transition:
     border-color 140ms ease,
     box-shadow 140ms ease,
@@ -927,47 +996,62 @@ textarea::placeholder {
   box-shadow:
     0 0 0 5px rgba(96, 165, 250, 0.54),
     0 0 34px rgba(59, 130, 246, 0.34);
-  transform: translateY(-2px) scale(1.012);
+  transform: translateY(-1px);
 }
 
 .tvHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 28px;
+  gap: 18px;
 }
 
 .tvHeader .brandMark {
-  width: 64px;
-  height: 64px;
+  width: 44px;
+  height: 44px;
 }
 
 .tvHeader .brandMark svg {
-  width: 36px;
-  height: 36px;
+  width: 25px;
+  height: 25px;
 }
 
 .tvHeader h1 {
   margin: 0;
-  font-size: clamp(2.4rem, 5vw, 5rem);
+  font-size: clamp(1.7rem, 2.9vw, 3.15rem);
   line-height: 1;
+}
+
+.tvHeaderActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.tvHeaderActions .secondaryButton {
+  width: 132px;
+  min-height: 40px;
+  padding: 0 10px;
+  font-size: 0.95rem;
 }
 
 .tvNav {
   display: grid;
-  grid-template-columns: repeat(4, minmax(130px, 1fr));
-  gap: 14px;
-  margin: 30px 0;
-  padding-bottom: 28px;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 12px 0 16px;
+  padding-bottom: 12px;
   border-bottom: 1px solid #1d2942;
 }
 
 .tvNav button {
-  min-height: 78px;
+  min-height: 44px;
   color: #d9e2f0;
   background: var(--panel);
   border: 2px solid var(--border);
-  font-size: clamp(1.2rem, 2vw, 1.8rem);
+  font-size: clamp(0.92rem, 1.2vw, 1.24rem);
   font-weight: 850;
 }
 
@@ -992,42 +1076,79 @@ textarea::placeholder {
 .tvGrid {
   display: grid;
   align-items: start;
-  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-  gap: 22px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .tvVideoCard {
-  height: 720px;
+  height: clamp(280px, 16vw, 300px);
   background: var(--panel-strong);
   border: 2px solid var(--border);
 }
 
+.tvVideoCard[data-tv-actions-active="true"] {
+  border-color: #5a96f8;
+  box-shadow:
+    inset 0 0 0 1px rgba(96, 165, 250, 0.32),
+    var(--shadow);
+}
+
 .tvVideoCard .videoBody {
-  padding: 20px;
+  gap: 5px;
+  padding: 10px;
 }
 
 .tvVideoCard h3 {
   color: #fff;
-  font-size: clamp(1.35rem, 2vw, 1.95rem);
+  font-size: clamp(0.9rem, 1vw, 1.12rem);
+  line-height: 1.15;
 }
 
 .tvVideoCard .metaLine,
 .tvVideoCard .description {
   color: #c7d2e2;
-  font-size: clamp(1rem, 1.4vw, 1.25rem);
+  font-size: clamp(0.72rem, 0.78vw, 0.86rem);
+  line-height: 1.25;
+}
+
+.tvVideoCard .description {
+  -webkit-line-clamp: 1;
 }
 
 .tvVideoCard .videoProgressMeta {
-  font-size: clamp(1rem, 1.3vw, 1.2rem);
+  font-size: clamp(0.72rem, 0.78vw, 0.86rem);
+}
+
+.tvVideoCard .videoProgress {
+  gap: 3px;
+  margin-top: 0;
 }
 
 .tvVideoCard .videoProgressTrack {
-  height: 8px;
+  height: 4px;
 }
 
-.tvVideoCard button,
+.tvVideoCard .buttonRow {
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.tvVideoCard .primaryButton,
+.tvVideoCard .secondaryButton,
+.tvVideoCard .dangerButton {
+  min-height: 34px;
+  padding: 0 6px;
+  font-size: clamp(0.68rem, 0.72vw, 0.78rem);
+}
+
+.tvVideoCard svg {
+  width: 12px;
+  height: 12px;
+}
+
 .tvSearch button,
 .tvChannel button,
+.tvSettings button,
 .tvLoadMoreRow button {
   min-height: 62px;
   font-size: 1.15rem;
@@ -1079,6 +1200,124 @@ textarea::placeholder {
   color: #c7d2e2;
 }
 
+.tvSettings {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.tvSettingsPanel {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  background: var(--panel-strong);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+}
+
+.tvSettingsPanel h3,
+.tvSettingsPanel p {
+  margin: 0;
+}
+
+.tvFieldLabel {
+  display: grid;
+  gap: 10px;
+  color: #d8e0ec;
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+.tvFieldLabel input {
+  min-height: 68px;
+  font-size: 1.35rem;
+}
+
+.tvKeyboardBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  align-items: end;
+  padding: 28px;
+  background: rgba(2, 5, 11, 0.78);
+}
+
+.tvKeyboardOverlay {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 1180px);
+  margin: 0 auto;
+  padding: 22px;
+  background: #071021;
+  border: 2px solid var(--border-bright);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52);
+}
+
+.tvKeyboardHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+}
+
+.tvKeyboardValue {
+  min-height: 58px;
+  padding: 12px 16px;
+  overflow: hidden;
+  color: var(--text);
+  background: #0b1425;
+  border: 1px solid #32405e;
+  border-radius: 8px;
+  font-size: 1.45rem;
+  font-weight: 760;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tvKeyboardValue span {
+  color: #69778f;
+}
+
+.tvKeyboardRows {
+  display: grid;
+  gap: 10px;
+}
+
+.tvKeyboardRow {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tvKeyboardKey {
+  min-width: 0;
+  min-height: 58px;
+  padding: 0 10px;
+  color: #eef4ff;
+  background: var(--panel-strong);
+  border: 2px solid var(--border);
+  font-size: 1.22rem;
+  font-weight: 850;
+}
+
+.tvKeyboardKey.active,
+.tvKeyboardKey:hover {
+  background: #162238;
+  border-color: var(--blue-bright);
+}
+
+.tvKeyboardKey.wide {
+  grid-column: span 4;
+}
+
+.tvKeyboardActions {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
 .tvFooter {
   display: flex;
   align-items: center;
@@ -1096,7 +1335,8 @@ textarea::placeholder {
 }
 
 .playerOverlayTv {
-  padding: 28px;
+  gap: 8px;
+  padding: 12px 28px 16px;
 }
 
 .playerOverlayTv [data-tv-focusable="true"] {
@@ -1112,25 +1352,133 @@ textarea::placeholder {
   box-shadow:
     0 0 0 5px rgba(96, 165, 250, 0.54),
     0 0 34px rgba(59, 130, 246, 0.34);
-  transform: translateY(-2px) scale(1.012);
+  transform: translateY(-1px);
 }
 
 .playerOverlayTv .playerTopbar {
-  font-size: 1.25rem;
+  gap: 10px;
+  font-size: 0.9rem;
 }
 
 .playerOverlayTv button {
-  min-height: 62px;
-  font-size: 1.15rem;
+  min-height: 42px;
+  font-size: 0.9rem;
 }
 
 .playerOverlayTv .playerFrame,
-.playerOverlayTv .playerDetails {
-  width: min(100%, 1200px);
+.playerOverlayTv .playerTvControls {
+  width: min(calc(100vw - 56px), calc((100vh - 212px) * 16 / 9));
 }
 
 .playerOverlayTv .playerFrame {
-  height: min(calc((100vw - 56px) * 9 / 16), 675px);
+  height: min(calc((100vw - 56px) * 9 / 16), calc(100vh - 212px));
+}
+
+.playerOverlayTv .playerSurface {
+  align-content: start;
+  gap: 10px;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.playerOverlayTv .playerDetails {
+  display: none;
+}
+
+.playerOverlayTv .playerTvButtonRow button {
+  min-height: 36px;
+  padding: 0 8px;
+  font-size: 0.82rem;
+}
+
+.playerOverlayTv .playerTvButtonRow svg {
+  width: 16px;
+  height: 16px;
+}
+
+.playerOverlayFullscreen {
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+}
+
+.playerOverlayFullscreen .playerTopbar,
+.playerOverlayFullscreen .playerDetails {
+  display: none;
+}
+
+.playerOverlayFullscreen .playerSurface {
+  position: relative;
+  display: block;
+  padding: 0;
+  overflow: hidden;
+}
+
+.playerOverlayFullscreen .playerFrame {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+
+.playerOverlayFullscreen .playerEmbedMount,
+.playerOverlayFullscreen .playerFrame iframe {
+  border-radius: 0;
+}
+
+.playerOverlayFullscreen .playerTvControls {
+  position: absolute;
+  right: 24px;
+  bottom: 20px;
+  left: 24px;
+  width: auto;
+  padding: 12px;
+  background: rgba(2, 5, 11, 0.78);
+  border: 1px solid rgba(147, 197, 253, 0.28);
+  border-radius: 8px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.42);
+}
+
+.playerOverlayTv.playerOverlayFullscreen {
+  --player-fullscreen-safe-x: clamp(64px, 6vw, 128px);
+  --player-fullscreen-safe-y: clamp(38px, 5vh, 72px);
+  --player-fullscreen-safe-width: clamp(128px, 12vw, 256px);
+  --player-fullscreen-safe-height: clamp(76px, 10vh, 144px);
+  --player-fullscreen-controls-height: 92px;
+  padding: var(--player-fullscreen-safe-y) var(--player-fullscreen-safe-x);
+}
+
+.playerOverlayTv.playerOverlayFullscreen .playerSurface {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+}
+
+.playerOverlayTv.playerOverlayFullscreen .playerFrame,
+.playerOverlayTv.playerOverlayFullscreen .playerTvControls {
+  width: min(
+    calc(100vw - var(--player-fullscreen-safe-width)),
+    calc((100vh - var(--player-fullscreen-safe-height) - var(--player-fullscreen-controls-height)) * 16 / 9)
+  );
+}
+
+.playerOverlayTv.playerOverlayFullscreen .playerFrame {
+  height: min(
+    calc((100vw - var(--player-fullscreen-safe-width)) * 9 / 16),
+    calc(100vh - var(--player-fullscreen-safe-height) - var(--player-fullscreen-controls-height))
+  );
+  border-radius: 4px;
+}
+
+.playerOverlayTv.playerOverlayFullscreen .playerEmbedMount,
+.playerOverlayTv.playerOverlayFullscreen .playerFrame iframe {
+  border-radius: 4px;
+}
+
+.playerOverlayTv.playerOverlayFullscreen .playerTvControls {
+  position: static;
+  padding: 10px 12px;
 }
 
 @media (max-width: 760px) {
@@ -1260,7 +1608,7 @@ textarea::placeholder {
 
 @media (max-width: 900px) {
   .tvShell {
-    padding: 20px;
+    padding: 16px;
   }
 
   .tvHeader,
@@ -1269,15 +1617,63 @@ textarea::placeholder {
   }
 
   .tvNav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .tvNav button {
+    min-height: 48px;
+    padding: 0 8px;
+    font-size: 0.92rem;
   }
 
   .tvGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .tvVideoCard {
+    height: 310px;
+  }
+
+  .tvVideoCard .videoBody {
+    padding: 9px;
+  }
+
+  .tvVideoCard .description {
+    -webkit-line-clamp: 1;
+  }
+
+  .tvVideoCard .primaryButton,
+  .tvVideoCard .secondaryButton,
+  .tvVideoCard .dangerButton {
+    min-height: 32px;
+    padding: 0 6px;
+    font-size: 0.72rem;
   }
 
   .tvSearch {
     grid-template-columns: 1fr;
+  }
+
+  .tvSettings {
+    grid-template-columns: 1fr;
+  }
+
+  .tvKeyboardBackdrop {
+    padding: 16px;
+  }
+
+  .tvKeyboardHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .tvKeyboardRow,
+  .tvKeyboardActions {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .tvKeyboardKey.wide {
+    grid-column: span 2;
   }
 
   .tvSectionHeader {

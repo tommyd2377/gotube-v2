@@ -11,7 +11,9 @@
     "dev:web": "npm --workspace apps/web run dev",
     "dev:worker": "npm --workspace worker run dev",
     "typecheck": "npm --workspace worker run typecheck && npm --workspace apps/web run typecheck",
-    "build": "npm --workspace worker run build && npm --workspace apps/web run build"
+    "build": "npm --workspace worker run build && npm --workspace apps/web run build",
+    "build:firetv": "bash scripts/build-firetv-apk.sh",
+    "install:firetv": "adb install -r apps/firetv/build/outputs/gotube-firetv-debug.apk"
   },
   "engines": {
     "node": ">=20"

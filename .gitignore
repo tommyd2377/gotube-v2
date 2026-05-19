@@ -2,6 +2,9 @@ node_modules/
 dist/
 .vite/
 .wrangler/
+apps/firetv/build/
+*.apk
+*.idsig
 
 .DS_Store
 *.log
