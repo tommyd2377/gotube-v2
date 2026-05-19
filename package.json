@@ -1,0 +1,19 @@
+{
+  "name": "gotube",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/web",
+    "worker"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:worker": "npm --workspace worker run dev",
+    "typecheck": "npm --workspace worker run typecheck && npm --workspace apps/web run typecheck",
+    "build": "npm --workspace worker run build && npm --workspace apps/web run build"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

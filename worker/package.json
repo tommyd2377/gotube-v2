@@ -1,0 +1,16 @@
+{
+  "name": "@gotube/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev src/index.ts --local --host 127.0.0.1 --port 8787",
+    "build": "wrangler deploy src/index.ts --dry-run --outdir dist",
+    "typecheck": "tsc --noEmit --pretty false"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.96.0"
+  }
+}

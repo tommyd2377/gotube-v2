@@ -1,0 +1,9 @@
+# Private passphrase used by the frontend as x-gotube-sync-key.
+GOTUBE_SYNC_KEY=replace_with_private_sync_key
+
+# Required for real YouTube Data API searches and channel sync.
+YOUTUBE_API_KEY=your_free_youtube_data_api_key
+
+# Required for persistent GoTube data. Keep the service role key server-side only.
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
