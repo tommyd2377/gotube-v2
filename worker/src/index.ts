@@ -85,27 +85,32 @@ interface SearchChannelResult {
 
 type SearchResult = SearchVideoResult | SearchChannelResult;
 type ChannelLookup = { id: string } | { forHandle: string } | { forUsername: string };
+type YouTubeThumbnail = { url?: string; width?: number; height?: number };
+type YouTubeThumbnails = {
+  default?: YouTubeThumbnail;
+  medium?: YouTubeThumbnail;
+  high?: YouTubeThumbnail;
+  standard?: YouTubeThumbnail;
+  maxres?: YouTubeThumbnail;
+};
 type YouTubeChannelItem = {
   id: string;
   snippet: {
     title: string;
     description?: string;
     customUrl?: string;
-    thumbnails?: {
-      medium?: { url?: string };
-      high?: { url?: string };
-      default?: { url?: string };
-    };
+    thumbnails?: YouTubeThumbnails;
   };
   contentDetails?: {
     relatedPlaylists?: { uploads?: string };
   };
 };
 
+const SHORTS_DURATION_SECONDS = 180;
 const DEFAULT_SETTINGS: SettingsShape = {
   hideShorts: true,
   hideWatched: false,
-  shortsThresholdSeconds: 90
+  shortsThresholdSeconds: SHORTS_DURATION_SECONDS
 };
 const DEFAULT_FEED_LIMIT = 20;
 const MAX_FEED_LIMIT = 50;
@@ -246,12 +251,26 @@ function isoDurationToSeconds(duration: string) {
 }
 
 function looksLikeShort(video: Pick<VideoRow, "title" | "description" | "duration_seconds">, threshold: number) {
-  if (typeof video.duration_seconds === "number" && video.duration_seconds > 0 && video.duration_seconds < threshold) {
+  const effectiveThreshold = Math.max(threshold, SHORTS_DURATION_SECONDS);
+  if (typeof video.duration_seconds === "number" && video.duration_seconds > 0 && video.duration_seconds <= effectiveThreshold) {
     return true;
   }
 
   const text = `${video.title} ${video.description ?? ""}`.toLowerCase();
   return text.includes("#shorts") || text.includes("youtube shorts") || text.includes("ytshorts");
+}
+
+function thumbnailsLookLikeShort(thumbnails?: YouTubeThumbnails) {
+  return Object.values(thumbnails ?? {}).some((thumbnail) => {
+    if (!thumbnail?.width || !thumbnail.height) {
+      return false;
+    }
+    return thumbnail.height > thumbnail.width * 1.1;
+  });
+}
+
+function isShortFormVideo(video: Pick<VideoRow, "title" | "description" | "duration_seconds" | "is_short">, threshold: number) {
+  return Boolean(video.is_short) || looksLikeShort(video, threshold);
 }
 
 function withChannelInfo(video: VideoRow, channels: ChannelRow[], watched: WatchedVideoRow[] = []) {
@@ -486,13 +505,13 @@ async function addWatchLater(env: Env, youtubeVideoId: string) {
 
   const existingVideos = await listVideos(env);
   const existingVideo = existingVideos.find((video) => video.youtube_video_id === youtubeVideoId);
-  if (existingVideo?.is_short) {
+  if (existingVideo && isShortFormVideo(existingVideo, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
     throw new Error("Shorts are not available in GoTube.");
   }
   if (!existingVideo) {
     const video = await fetchVideoDetailsById(env, youtubeVideoId, DEFAULT_SETTINGS.shortsThresholdSeconds);
     if (video) {
-      if (video.is_short) {
+      if (isShortFormVideo(video, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
         throw new Error("Shorts are not available in GoTube.");
       }
       await upsertVideos(env, [video]);
@@ -559,7 +578,7 @@ async function getSettings(env: Env) {
   const settings: SettingsShape = { ...DEFAULT_SETTINGS };
   for (const row of rows) {
     if (row.key === "shortsThresholdSeconds" && typeof row.value === "number") {
-      settings.shortsThresholdSeconds = row.value;
+      settings.shortsThresholdSeconds = Math.max(row.value, SHORTS_DURATION_SECONDS);
     }
   }
   settings.hideShorts = true;
@@ -627,11 +646,7 @@ async function searchYouTube(env: Env, q: string, type: "video" | "channel") {
         channelId?: string;
         channelTitle?: string;
         publishedAt?: string;
-        thumbnails?: {
-          medium?: { url?: string };
-          high?: { url?: string };
-          default?: { url?: string };
-        };
+        thumbnails?: YouTubeThumbnails;
       };
     }>;
   };
@@ -697,7 +712,7 @@ async function searchYouTube(env: Env, q: string, type: "video" | "channel") {
     }
 
     const detail = detailById.get(result.youtube_video_id);
-    if (detail?.is_short) {
+    if (detail && isShortFormVideo(detail, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
       return [];
     }
 
@@ -754,12 +769,7 @@ async function fetchVideoDetails(env: Env, youtubeVideoIds: string[], shortsThre
         title: string;
         description?: string;
         publishedAt?: string;
-        thumbnails?: {
-          medium?: { url?: string };
-          high?: { url?: string };
-          standard?: { url?: string };
-          default?: { url?: string };
-        };
+        thumbnails?: YouTubeThumbnails;
       };
       contentDetails?: {
         duration?: string;
@@ -775,22 +785,23 @@ async function fetchVideoDetails(env: Env, youtubeVideoIds: string[], shortsThre
 
   return response.items.map<VideoRow>((item) => {
     const durationSeconds = item.contentDetails?.duration ? isoDurationToSeconds(item.contentDetails.duration) : null;
+    const thumbnails = item.snippet.thumbnails;
     const video: VideoRow = {
       youtube_video_id: item.id,
       youtube_channel_id: item.snippet.channelId,
       title: cleanText(item.snippet.title),
       description: cleanText(item.snippet.description),
       thumbnail_url:
-        item.snippet.thumbnails?.standard?.url ??
-        item.snippet.thumbnails?.high?.url ??
-        item.snippet.thumbnails?.medium?.url ??
-        item.snippet.thumbnails?.default?.url ??
+        thumbnails?.standard?.url ??
+        thumbnails?.high?.url ??
+        thumbnails?.medium?.url ??
+        thumbnails?.default?.url ??
         null,
       duration_seconds: durationSeconds,
       published_at: item.snippet.publishedAt ?? null,
       is_short: false
     };
-    video.is_short = looksLikeShort(video, shortsThreshold);
+    video.is_short = looksLikeShort(video, shortsThreshold) || thumbnailsLookLikeShort(thumbnails);
     return video;
   });
 }
@@ -827,7 +838,9 @@ async function syncChannel(env: Env, youtubeChannelId: string, force = true) {
   const ids = playlist.items
     .map((item) => item.contentDetails?.videoId)
     .filter((id): id is string => Boolean(id));
-  videos = (await fetchVideoDetails(env, ids, settings.shortsThresholdSeconds)).filter((video) => !video.is_short);
+  videos = (await fetchVideoDetails(env, ids, settings.shortsThresholdSeconds)).filter(
+    (video) => !isShortFormVideo(video, settings.shortsThresholdSeconds)
+  );
 
   const storedVideos = await upsertVideos(env, videos);
   await updateChannelCheckedAt(env, youtubeChannelId);
@@ -852,7 +865,7 @@ async function getFeed(env: Env, url: URL) {
   const filtered = videos
     .filter((video) => channelIds.has(video.youtube_channel_id))
     .filter((video) => !channelId || video.youtube_channel_id === channelId)
-    .filter((video) => !video.is_short)
+    .filter((video) => !isShortFormVideo(video, DEFAULT_SETTINGS.shortsThresholdSeconds))
     .filter((video) => !before || isBeforeFeedCursor(video, before))
     .sort(compareFeedVideos)
     .map((video) => withChannelInfo(video, channels, watched));
@@ -873,7 +886,7 @@ async function getWatchLater(env: Env) {
   for (const item of watchLater) {
     const video = videos.find((candidate) => candidate.youtube_video_id === item.youtube_video_id);
     if (video) {
-      if (video.is_short) {
+      if (isShortFormVideo(video, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
         continue;
       }
       items.push({

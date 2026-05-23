@@ -1,5 +1,6 @@
 import Dexie, { type Table } from "dexie";
 import type { Channel, LocalExport, SettingsShape, Video, WatchedVideo, WatchLaterItem } from "./types";
+import { markShortFormVideo, SHORTS_DURATION_SECONDS, visibleWatchLaterItems } from "./videoFilter";
 
 type SettingRow = {
   key: string;
@@ -31,7 +32,7 @@ export const db = new GoTubeDb();
 export const DEFAULT_SETTINGS: SettingsShape = {
   hideShorts: true,
   hideWatched: false,
-  shortsThresholdSeconds: 90
+  shortsThresholdSeconds: SHORTS_DURATION_SECONDS
 };
 
 export async function getCachedSettings() {
@@ -41,7 +42,7 @@ export async function getCachedSettings() {
     settings.hideShorts = true;
     settings.hideWatched = false;
     if (row.key === "shortsThresholdSeconds" && typeof row.value === "number") {
-      settings.shortsThresholdSeconds = row.value;
+      settings.shortsThresholdSeconds = Math.max(row.value, SHORTS_DURATION_SECONDS);
     }
   }
   return settings;
@@ -51,7 +52,7 @@ export async function cacheSettings(settings: SettingsShape) {
   await db.settings.bulkPut([
     { key: "hideShorts", value: true, updated_at: new Date().toISOString() },
     { key: "hideWatched", value: false, updated_at: new Date().toISOString() },
-    { key: "shortsThresholdSeconds", value: settings.shortsThresholdSeconds, updated_at: new Date().toISOString() }
+    { key: "shortsThresholdSeconds", value: Math.max(settings.shortsThresholdSeconds, SHORTS_DURATION_SECONDS), updated_at: new Date().toISOString() }
   ]);
 }
 
@@ -60,12 +61,12 @@ export async function cacheChannels(channels: Channel[]) {
 }
 
 export async function cacheVideos(videos: Video[]) {
-  await db.videos.bulkPut(videos);
+  await db.videos.bulkPut(videos.map(markShortFormVideo));
 }
 
 export async function cacheWatchLater(items: WatchLaterItem[]) {
   await db.watchLater.clear();
-  await db.watchLater.bulkPut(items.filter((item) => !item.video.is_short));
+  await db.watchLater.bulkPut(visibleWatchLaterItems(items));
 }
 
 export async function cachedFeed(_settings: SettingsShape, limit?: number) {
@@ -79,6 +80,7 @@ export async function cachedFeed(_settings: SettingsShape, limit?: number) {
 
   const filtered = videos
     .filter((video) => channelIds.has(video.youtube_channel_id))
+    .map(markShortFormVideo)
     .filter((video) => !video.is_short)
     .map((video) => {
       const channel = channels.find((item) => item.youtube_channel_id === video.youtube_channel_id);

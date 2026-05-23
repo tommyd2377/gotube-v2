@@ -100,6 +100,8 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   const lastSavedProgressRef = useRef(video.progress_seconds ?? 0);
   const seekFeedbackTimeoutRef = useRef<number | null>(null);
   const seekBurstRef = useRef({ direction: 0, count: 0, timestamp: 0 });
+  const browserFullscreenRef = useRef(false);
+  const fullscreenExitAtRef = useRef(0);
   const directPlaybackRef = useRef({
     offsetSeconds: video.completed ? 0 : Math.floor(video.progress_seconds ?? 0),
     startedAtMs: 0,
@@ -265,13 +267,51 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     }
   }
 
-  function toggleFullscreen() {
-    setFullscreen((value) => !value);
+  function focusPlayerStageSoon() {
     window.setTimeout(() => {
       if (frameRef.current) {
         focusTvElement(frameRef.current);
       }
     }, 60);
+  }
+
+  async function enterFullscreen() {
+    setFullscreen(true);
+    focusPlayerStageSoon();
+
+    const overlay = overlayRef.current;
+    if (!overlay?.requestFullscreen || document.fullscreenElement === overlay) {
+      return;
+    }
+
+    try {
+      await overlay.requestFullscreen();
+    } catch {
+      // Keep the app-level fullscreen layout if browser fullscreen is unavailable.
+    }
+  }
+
+  async function exitFullscreen() {
+    if (document.fullscreenElement === overlayRef.current && document.exitFullscreen) {
+      try {
+        await document.exitFullscreen();
+      } catch {
+        // Fall through and reset the app-level fullscreen layout.
+      }
+    }
+
+    fullscreenExitAtRef.current = Date.now();
+    setFullscreen(false);
+    focusPlayerStageSoon();
+  }
+
+  function toggleFullscreen() {
+    if (fullscreen || document.fullscreenElement === overlayRef.current) {
+      void exitFullscreen();
+      return;
+    }
+
+    void enterFullscreen();
   }
 
   function openYouTubeSignIn() {
@@ -407,6 +447,25 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   }, [tvMode, video.youtube_video_id]);
 
   useEffect(() => {
+    function onFullscreenChange() {
+      const isBrowserFullscreen = document.fullscreenElement === overlayRef.current;
+      if (browserFullscreenRef.current && !isBrowserFullscreen) {
+        fullscreenExitAtRef.current = Date.now();
+      }
+      browserFullscreenRef.current = isBrowserFullscreen;
+      setFullscreen(isBrowserFullscreen);
+    }
+
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+      if (document.fullscreenElement === overlayRef.current && document.exitFullscreen) {
+        void document.exitFullscreen().catch(() => undefined);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const active = document.activeElement as HTMLElement | null;
       const activeIsPlayerStage = active?.dataset.tvPlayerStage === "true";
@@ -454,6 +513,11 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
           togglePlayback();
           return;
         }
+        if (active?.dataset.tvPlayerFullscreen === "true") {
+          event.preventDefault();
+          toggleFullscreen();
+          return;
+        }
         if (active?.dataset.tvFocusable === "true") {
           event.preventDefault();
           active.click();
@@ -462,8 +526,11 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
       if (event.key === "Escape" || event.key === "Backspace") {
         event.preventDefault();
-        if (fullscreen) {
-          setFullscreen(false);
+        if (fullscreen || document.fullscreenElement === overlayRef.current) {
+          void exitFullscreen();
+          return;
+        }
+        if (Date.now() - fullscreenExitAtRef.current < 300) {
           return;
         }
         onClose();
@@ -540,7 +607,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
                 ref={directIframeRef}
                 title={video.title}
                 src={tvEmbedSrc}
-                allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
                 allowFullScreen
                 onLoad={() => setReady(true)}
               />
@@ -610,7 +677,14 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
                 <LogIn aria-hidden="true" />
                 Sign In
               </button>
-              <button className="secondaryButton" type="button" onClick={toggleFullscreen} data-tv-focusable="true" data-tv-player-control="true">
+              <button
+                className="secondaryButton"
+                type="button"
+                onClick={toggleFullscreen}
+                data-tv-focusable="true"
+                data-tv-player-control="true"
+                data-tv-player-fullscreen="true"
+              >
                 {fullscreen ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
                 {fullscreen ? "Exit" : "Full"}
               </button>

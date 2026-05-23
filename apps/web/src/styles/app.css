@@ -1427,6 +1427,7 @@ textarea::placeholder {
 
 .playerOverlayFullscreen .playerTvControls {
   position: absolute;
+  z-index: 3;
   right: 24px;
   bottom: 20px;
   left: 24px;
@@ -1436,49 +1437,6 @@ textarea::placeholder {
   border: 1px solid rgba(147, 197, 253, 0.28);
   border-radius: 8px;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.42);
-}
-
-.playerOverlayTv.playerOverlayFullscreen {
-  --player-fullscreen-safe-x: clamp(64px, 6vw, 128px);
-  --player-fullscreen-safe-y: clamp(38px, 5vh, 72px);
-  --player-fullscreen-safe-width: clamp(128px, 12vw, 256px);
-  --player-fullscreen-safe-height: clamp(76px, 10vh, 144px);
-  --player-fullscreen-controls-height: 92px;
-  padding: var(--player-fullscreen-safe-y) var(--player-fullscreen-safe-x);
-}
-
-.playerOverlayTv.playerOverlayFullscreen .playerSurface {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  align-content: center;
-  justify-items: center;
-  gap: 10px;
-}
-
-.playerOverlayTv.playerOverlayFullscreen .playerFrame,
-.playerOverlayTv.playerOverlayFullscreen .playerTvControls {
-  width: min(
-    calc(100vw - var(--player-fullscreen-safe-width)),
-    calc((100vh - var(--player-fullscreen-safe-height) - var(--player-fullscreen-controls-height)) * 16 / 9)
-  );
-}
-
-.playerOverlayTv.playerOverlayFullscreen .playerFrame {
-  height: min(
-    calc((100vw - var(--player-fullscreen-safe-width)) * 9 / 16),
-    calc(100vh - var(--player-fullscreen-safe-height) - var(--player-fullscreen-controls-height))
-  );
-  border-radius: 4px;
-}
-
-.playerOverlayTv.playerOverlayFullscreen .playerEmbedMount,
-.playerOverlayTv.playerOverlayFullscreen .playerFrame iframe {
-  border-radius: 4px;
-}
-
-.playerOverlayTv.playerOverlayFullscreen .playerTvControls {
-  position: static;
-  padding: 10px 12px;
 }
 
 @media (max-width: 760px) {

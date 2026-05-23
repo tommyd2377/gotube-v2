@@ -42,6 +42,7 @@ import {
 import { formatDateTime } from "./lib/format";
 import { focusFirstTvElement, focusNearestTvElement, focusTvElement, type TvDirectionKey } from "./lib/tvFocus";
 import type { Channel, SearchResult, SearchVideoResult, SettingsShape, Video, WatchedVideo, WatchLaterItem } from "./lib/types";
+import { visibleVideos, visibleWatchLaterItems } from "./lib/videoFilter";
 
 type TabId = "feed" | "watchLater" | "search" | "channels" | "settings";
 type TvSection = "feed" | "watchLater" | "search" | "channels" | "channelFeed" | "settings";
@@ -86,8 +87,9 @@ function cursorFromVideos(videos: Video[]) {
 }
 
 function appendUniqueVideos(current: Video[], next: Video[]) {
-  const seen = new Set(current.map((video) => video.youtube_video_id));
-  return [...current, ...next.filter((video) => !seen.has(video.youtube_video_id))];
+  const visibleCurrent = visibleVideos(current);
+  const seen = new Set(visibleCurrent.map((video) => video.youtube_video_id));
+  return [...visibleCurrent, ...visibleVideos(next).filter((video) => !seen.has(video.youtube_video_id))];
 }
 
 function withWatchedState(video: Video, watched?: WatchedVideo): Video {
@@ -145,18 +147,19 @@ function useGoTubeData() {
     setFeed(cachedPage);
     setFeedCursor(cursorFromVideos(cachedPage));
     setFeedHasMore(cachedVideos.length > FEED_PAGE_SIZE);
-    setWatchLater(cachedWatchLater.filter((item) => !item.video.is_short));
+    setWatchLater(visibleWatchLaterItems(cachedWatchLater));
     setWatchedVideos(cachedWatched);
     return cachedSettings;
   }, []);
 
   const refreshFeed = useCallback(async (nextSettings: SettingsShape) => {
     const response = await api.feed(nextSettings, { limit: FEED_PAGE_SIZE });
-    setFeed(response.videos);
+    const videos = visibleVideos(response.videos);
+    setFeed(videos);
     setFeedCursor(response.nextCursor);
     setFeedHasMore(response.hasMore);
     await cacheVideos(response.videos);
-    return response.videos;
+    return videos;
   }, []);
 
   const refreshRemote = useCallback(
@@ -175,10 +178,12 @@ function useGoTubeData() {
           api.watched()
         ]);
         setChannels(channelResponse.channels);
-        setFeed(feedResponse.videos);
+        const feedVideos = visibleVideos(feedResponse.videos);
+        const watchLaterItems = visibleWatchLaterItems(watchLaterResponse.items);
+        setFeed(feedVideos);
         setFeedCursor(feedResponse.nextCursor);
         setFeedHasMore(feedResponse.hasMore);
-        setWatchLater(watchLaterResponse.items);
+        setWatchLater(watchLaterItems);
         setWatchedVideos(watchedResponse.items);
         await Promise.all([
           cacheChannels(channelResponse.channels),
@@ -208,11 +213,12 @@ function useGoTubeData() {
     setLoadingOlder(true);
     try {
       const response = await api.feed(settings, { limit: FEED_PAGE_SIZE, before: feedCursor });
-      setFeed((items) => appendUniqueVideos(items, response.videos));
+      const videos = visibleVideos(response.videos);
+      setFeed((items) => appendUniqueVideos(items, videos));
       setFeedCursor(response.nextCursor);
       setFeedHasMore(response.hasMore);
       await cacheVideos(response.videos);
-      if (!response.videos.length) {
+      if (!videos.length) {
         setNotice("No older synced videos found.");
       }
     } catch (cause) {
@@ -294,7 +300,7 @@ function useGoTubeData() {
       try {
         await api.addWatchLater(video.youtube_video_id);
         const response = await api.watchLater();
-        setWatchLater(response.items);
+        setWatchLater(visibleWatchLaterItems(response.items));
         await cacheVideos([video]);
         await cacheWatchLater(response.items);
         setNotice("Added to Watch Later.");
@@ -309,7 +315,7 @@ function useGoTubeData() {
     try {
       await api.removeWatchLater(video.youtube_video_id);
       const response = await api.watchLater();
-      setWatchLater(response.items);
+      setWatchLater(visibleWatchLaterItems(response.items));
       await cacheWatchLater(response.items);
       setNotice("Removed from Watch Later.");
     } catch (cause) {
@@ -568,11 +574,12 @@ function DesktopApp() {
         before,
         channelId: channel.youtube_channel_id
       });
-      setChannelFeed((items) => (before ? appendUniqueVideos(items, response.videos) : response.videos));
+      const videos = visibleVideos(response.videos);
+      setChannelFeed((items) => (before ? appendUniqueVideos(items, videos) : videos));
       setChannelFeedCursor(response.nextCursor);
       setChannelFeedHasMore(response.hasMore);
       await cacheVideos(response.videos);
-      if (!response.videos.length && !before) {
+      if (!videos.length && !before) {
         data.setNotice("No synced videos for this channel yet. Add or sync it to build this channel feed.");
       }
     } catch (cause) {
@@ -1240,11 +1247,12 @@ function TvApp() {
         before,
         channelId: channel.youtube_channel_id
       });
-      setChannelFeed((items) => (before ? appendUniqueVideos(items, response.videos) : response.videos));
+      const videos = visibleVideos(response.videos);
+      setChannelFeed((items) => (before ? appendUniqueVideos(items, videos) : videos));
       setChannelFeedCursor(response.nextCursor);
       setChannelFeedHasMore(response.hasMore);
       await cacheVideos(response.videos);
-      if (!response.videos.length && !before) {
+      if (!videos.length && !before) {
         data.setNotice("No synced videos for this channel yet.");
       }
     } catch (cause) {
