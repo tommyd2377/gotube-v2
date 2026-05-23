@@ -752,7 +752,7 @@ function DesktopApp() {
           aria-label="Go to Feed"
         >
           <div className="brandMark">
-            <Rss aria-hidden="true" />
+            <img className="brandMarkImage" src="/brand/gotube-icon.svg" alt="" aria-hidden="true" />
           </div>
           <div>
             <h1>GoTube</h1>
@@ -1454,7 +1454,7 @@ function TvApp() {
       <header className="tvHeader">
         <button className="brandHomeButton tvBrandHomeButton" type="button" onClick={() => goToSection("feed")} aria-label="Go to Feed">
           <div className="brandMark">
-            <Rss aria-hidden="true" />
+            <img className="brandMarkImage" src="/brand/gotube-icon.svg" alt="" aria-hidden="true" />
           </div>
           <div>
             <p className="eyebrow">GoTube TV</p>

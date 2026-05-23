@@ -1,0 +1,69 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+    
+    <defs>
+      <linearGradient id="blueStroke" x1="250" x2="776" y1="250" y2="800" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#34A3FF"/>
+        <stop offset="0.5" stop-color="#168BFF"/>
+        <stop offset="1" stop-color="#006DFF"/>
+      </linearGradient>
+      <linearGradient id="blueFill" x1="450" x2="620" y1="500" y2="650" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#34A3FF"/>
+        <stop offset="1" stop-color="#006DFF"/>
+      </linearGradient>
+      <radialGradient id="iconPanel" cx="32%" cy="15%" r="96%">
+        <stop offset="0" stop-color="#101A30"/>
+        <stop offset="0.55" stop-color="#071021"/>
+        <stop offset="1" stop-color="#02050B"/>
+      </radialGradient>
+      <radialGradient id="innerGlow" cx="50%" cy="42%" r="54%">
+        <stop offset="0" stop-color="#13213C" stop-opacity="0.9"/>
+        <stop offset="1" stop-color="#02050B" stop-opacity="0"/>
+      </radialGradient>
+      <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+        <feDropShadow dx="0" dy="0" stdDeviation="18" flood-color="#168BFF" flood-opacity="0.55"/>
+        <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#001D4D" flood-opacity="0.55"/>
+      </filter>
+      <filter id="wordGlow" x="-20%" y="-35%" width="140%" height="170%" color-interpolation-filters="sRGB">
+        <feDropShadow dx="0" dy="0" stdDeviation="12" flood-color="#168BFF" flood-opacity="0.44"/>
+        <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#000000" flood-opacity="0.7"/>
+      </filter>
+      <linearGradient id="wordBlue" x1="0" x2="1">
+        <stop offset="0" stop-color="#0B72FF"/>
+        <stop offset="0.55" stop-color="#168BFF"/>
+        <stop offset="1" stop-color="#34A3FF"/>
+      </linearGradient>
+      <radialGradient id="deepBackdrop" cx="50%" cy="25%" r="80%">
+        <stop offset="0" stop-color="#08152C"/>
+        <stop offset="0.55" stop-color="#030A17"/>
+        <stop offset="1" stop-color="#02050B"/>
+      </radialGradient>
+      <linearGradient id="streakBlue" x1="0" x2="1">
+        <stop offset="0" stop-color="#003B8E" stop-opacity="0"/>
+        <stop offset="0.22" stop-color="#0E8BFF" stop-opacity="0.75"/>
+        <stop offset="0.5" stop-color="#35A9FF" stop-opacity="0.28"/>
+        <stop offset="0.8" stop-color="#006DFF" stop-opacity="0.7"/>
+        <stop offset="1" stop-color="#003B8E" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+  
+    <rect width="1024" height="1024" rx="210" fill="#02050B"/>
+    
+    <g transform="scale(1)" filter="url(#softGlow)" opacity="1">
+      
+        <rect x="72" y="72" width="880" height="880" rx="168" fill="url(#iconPanel)" stroke="#3A4562" stroke-width="8"/>
+        <rect x="94" y="94" width="836" height="836" rx="150" fill="url(#innerGlow)" opacity="0.7"/>
+      
+      <path d="M398 300C430 267 471 249 512 249C553 249 594 267 626 300"
+        fill="none" stroke="url(#blueStroke)" stroke-width="42" stroke-linecap="round"/>
+      <path d="M446 354C464 336 488 326 512 326C536 326 560 336 578 354"
+        fill="none" stroke="url(#blueStroke)" stroke-width="35" stroke-linecap="round"/>
+      <circle cx="512" cy="397" r="24" fill="url(#blueFill)"/>
+      <rect x="248" y="440" width="528" height="286" rx="76"
+        fill="#050B17" fill-opacity="0.42"
+        stroke="url(#blueStroke)" stroke-width="43"/>
+      <path d="M463 508C463 489 484 477 501 487L610 552C627 562 627 587 610 597L501 662C484 672 463 660 463 641Z"
+        fill="url(#blueFill)"/>
+      <rect x="431" y="772" width="162" height="34" rx="17" fill="url(#blueFill)"/>
+    </g>
+  
+  </svg>

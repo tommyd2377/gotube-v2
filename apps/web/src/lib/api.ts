@@ -1,6 +1,7 @@
 import type { Channel, FeedResponse, SearchResult, SettingsShape, Video, WatchLaterItem } from "./types";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
+const DEFAULT_API_BASE = import.meta.env.PROD ? "https://gotube-api.gotube-215613.workers.dev/api" : "/api";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE;
 const SYNC_KEY_STORAGE = "gotube.syncKey";
 
 export class ApiError extends Error {

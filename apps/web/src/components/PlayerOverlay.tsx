@@ -1,5 +1,5 @@
 import { ArrowLeft, FastForward, LogIn, Maximize2, Minimize2, Pause, Play, Rewind } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatDate, formatDuration } from "../lib/format";
 import { focusFirstTvElement, focusNearestTvElement, focusTvElement, type TvDirectionKey } from "../lib/tvFocus";
 import type { Video } from "../lib/types";
@@ -43,6 +43,7 @@ interface YouTubePlayer {
 let apiPromise: Promise<void> | null = null;
 const TV_SEEK_SECONDS = 30;
 const TV_SEEK_ACCELERATION_SECONDS = [30, 60, 120, 300];
+const FULLSCREEN_CONTROLS_IDLE_MS = 10000;
 
 type SeekFeedback = {
   amountLabel: string;
@@ -99,6 +100,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   const playerRef = useRef<YouTubePlayer | null>(null);
   const lastSavedProgressRef = useRef(video.progress_seconds ?? 0);
   const seekFeedbackTimeoutRef = useRef<number | null>(null);
+  const controlsHideTimeoutRef = useRef<number | null>(null);
   const seekBurstRef = useRef({ direction: 0, count: 0, timestamp: 0 });
   const browserFullscreenRef = useRef(false);
   const fullscreenExitAtRef = useRef(0);
@@ -112,6 +114,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   const [currentSeconds, setCurrentSeconds] = useState(video.completed ? 0 : Math.floor(video.progress_seconds ?? 0));
   const [durationSeconds, setDurationSeconds] = useState(video.duration_seconds ?? 0);
   const [fullscreen, setFullscreen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
   const [seekFeedback, setSeekFeedback] = useState<SeekFeedback | null>(null);
   const channelLabel = video.channel_title ?? "Saved channel";
   const durationLabel = durationSeconds ? formatDuration(durationSeconds) : video.duration_seconds ? formatDuration(video.duration_seconds) : null;
@@ -314,6 +317,29 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     void enterFullscreen();
   }
 
+  const clearControlsHideTimeout = useCallback(() => {
+    if (controlsHideTimeoutRef.current) {
+      window.clearTimeout(controlsHideTimeoutRef.current);
+      controlsHideTimeoutRef.current = null;
+    }
+  }, []);
+
+  const revealFullscreenControls = useCallback(() => {
+    if (!tvMode || !fullscreen) {
+      return;
+    }
+
+    setControlsVisible(true);
+    clearControlsHideTimeout();
+    controlsHideTimeoutRef.current = window.setTimeout(() => {
+      setControlsVisible(false);
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.closest(".playerTvControls") && frameRef.current) {
+        focusTvElement(frameRef.current);
+      }
+    }, FULLSCREEN_CONTROLS_IDLE_MS);
+  }, [clearControlsHideTimeout, fullscreen, tvMode]);
+
   function openYouTubeSignIn() {
     const signInUrl = new URL("https://accounts.google.com/ServiceLogin");
     signInUrl.searchParams.set("service", "youtube");
@@ -432,8 +458,40 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       if (seekFeedbackTimeoutRef.current) {
         window.clearTimeout(seekFeedbackTimeoutRef.current);
       }
+      clearControlsHideTimeout();
     };
-  }, []);
+  }, [clearControlsHideTimeout]);
+
+  useEffect(() => {
+    if (!tvMode || !fullscreen) {
+      setControlsVisible(true);
+      clearControlsHideTimeout();
+      return;
+    }
+
+    revealFullscreenControls();
+    return clearControlsHideTimeout;
+  }, [clearControlsHideTimeout, fullscreen, revealFullscreenControls, tvMode]);
+
+  useEffect(() => {
+    if (!tvMode || !fullscreen) {
+      return;
+    }
+
+    const overlay = overlayRef.current;
+    if (!overlay) {
+      return;
+    }
+
+    overlay.addEventListener("pointermove", revealFullscreenControls);
+    overlay.addEventListener("pointerdown", revealFullscreenControls);
+    overlay.addEventListener("touchstart", revealFullscreenControls);
+    return () => {
+      overlay.removeEventListener("pointermove", revealFullscreenControls);
+      overlay.removeEventListener("pointerdown", revealFullscreenControls);
+      overlay.removeEventListener("touchstart", revealFullscreenControls);
+    };
+  }, [fullscreen, revealFullscreenControls, tvMode]);
 
   useEffect(() => {
     if (!tvMode) {
@@ -467,6 +525,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      revealFullscreenControls();
       const active = document.activeElement as HTMLElement | null;
       const activeIsPlayerStage = active?.dataset.tvPlayerStage === "true";
 
@@ -544,7 +603,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [fullscreen, onClose, tvMode]);
+  }, [fullscreen, onClose, revealFullscreenControls, tvMode]);
 
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
@@ -621,7 +680,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
           ) : null}
         </div>
         {tvMode ? (
-          <div className="playerTvControls">
+          <div className={["playerTvControls", fullscreen && !controlsVisible ? "playerTvControlsHidden" : ""].filter(Boolean).join(" ")}>
             <div className="playerTvProgress" aria-label="Playback progress">
               <span>{seekFeedback ? seekFeedback.amountLabel : formatDuration(currentSeconds)}</span>
               <div className="playerTvProgressTrack">

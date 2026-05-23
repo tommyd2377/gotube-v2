@@ -22,6 +22,8 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
@@ -33,6 +35,9 @@ public final class MainActivity extends Activity {
   private static final String LOCAL_HOST = "gotube.local";
 
   private WebView webView;
+  private FrameLayout rootView;
+  private ImageView splashView;
+  private long splashStartedAtMillis;
   private String allowedTopLevelHost = LOCAL_HOST;
   private String appStartUrl = LOCAL_ORIGIN + "/tv";
 
@@ -54,7 +59,25 @@ public final class MainActivity extends Activity {
     webView = new WebView(this);
     webView.setBackgroundColor(Color.rgb(2, 5, 11));
     configureWebView(webView);
-    setContentView(webView);
+
+    rootView = new FrameLayout(this);
+    rootView.setBackgroundColor(Color.rgb(2, 5, 11));
+    rootView.addView(webView, new FrameLayout.LayoutParams(
+      FrameLayout.LayoutParams.MATCH_PARENT,
+      FrameLayout.LayoutParams.MATCH_PARENT
+    ));
+
+    splashView = new ImageView(this);
+    splashStartedAtMillis = SystemClock.uptimeMillis();
+    splashView.setBackgroundColor(Color.rgb(2, 5, 11));
+    splashView.setImageResource(R.drawable.gotube_splash);
+    splashView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+    rootView.addView(splashView, new FrameLayout.LayoutParams(
+      FrameLayout.LayoutParams.MATCH_PARENT,
+      FrameLayout.LayoutParams.MATCH_PARENT
+    ));
+
+    setContentView(rootView);
     webView.loadUrl(startUrl);
   }
 
@@ -152,7 +175,35 @@ public final class MainActivity extends Activity {
       webView.destroy();
       webView = null;
     }
+    splashView = null;
+    rootView = null;
     super.onDestroy();
+  }
+
+  private void hideSplash() {
+    if (rootView == null || splashView == null) {
+      return;
+    }
+    final ImageView view = splashView;
+    long remainingSplashMillis = Math.max(0, 1000 - (SystemClock.uptimeMillis() - splashStartedAtMillis));
+    splashView = null;
+    view.postDelayed(new Runnable() {
+      @Override
+      public void run() {
+        view.animate()
+          .alpha(0f)
+          .setDuration(180)
+          .withEndAction(new Runnable() {
+            @Override
+            public void run() {
+              if (rootView != null) {
+                rootView.removeView(view);
+              }
+            }
+          })
+          .start();
+      }
+    }, remainingSplashMillis);
   }
 
   private void dispatchJsKey(String key) {
@@ -331,6 +382,7 @@ public final class MainActivity extends Activity {
     @Override
     public void onPageFinished(WebView view, String url) {
       CookieManager.getInstance().flush();
+      hideSplash();
     }
 
     @Override
@@ -397,7 +449,7 @@ public final class MainActivity extends Activity {
     String assetPath;
     if (path.equals("/") || path.equals("/tv") || path.equals("/tv/") || path.equals("/index.html")) {
       assetPath = "gotube/index.html";
-    } else if (path.startsWith("/assets/")) {
+    } else if (!path.startsWith("/api/") && path.contains(".")) {
       assetPath = "gotube" + path;
     } else if (!path.startsWith("/api/") && !path.contains(".")) {
       assetPath = "gotube/index.html";
@@ -432,6 +484,9 @@ public final class MainActivity extends Activity {
     }
     if (path.endsWith(".json")) {
       return "application/json";
+    }
+    if (path.endsWith(".webmanifest")) {
+      return "application/manifest+json";
     }
     if (path.endsWith(".svg")) {
       return "image/svg+xml";

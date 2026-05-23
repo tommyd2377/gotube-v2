@@ -4,9 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex,nofollow" />
+    <meta name="theme-color" content="#02050B" />
+    <meta name="description" content="Private YouTube, no recommendations." />
+    <meta property="og:title" content="GoTube" />
+    <meta property="og:description" content="Private YouTube, no recommendations." />
+    <meta property="og:image" content="/og-image.png" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>GoTube</title>
+    <style>
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: #02050b url("/brand/gotube-splash.svg") center / cover no-repeat;
+        transition: opacity 220ms ease, visibility 220ms ease;
+      }
+
+      #boot-splash.bootSplashHidden {
+        opacity: 0;
+        visibility: hidden;
+      }
+    </style>
   </head>
   <body>
+    <div id="boot-splash" aria-hidden="true"></div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
