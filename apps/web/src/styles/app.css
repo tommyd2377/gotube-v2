@@ -320,6 +320,29 @@ svg {
   margin-top: 22px;
 }
 
+.backToTopButton {
+  position: fixed;
+  z-index: 8;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  color: #fff;
+  background: var(--blue);
+  border: 1px solid #4f8ff7;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(2, 5, 11, 0.5);
+  transform: translateX(-50%);
+}
+
+.backToTopButton:hover {
+  background: #4c8ff8;
+}
+
 .sectionActions {
   justify-content: flex-end;
 }
@@ -979,6 +1002,11 @@ textarea::placeholder {
   overflow-x: hidden;
 }
 
+.tvShellPlayback {
+  padding: 0;
+  background: #02050b;
+}
+
 .tvShell [data-tv-focusable="true"] {
   scroll-margin: 18px;
   transition:
@@ -1024,7 +1052,8 @@ textarea::placeholder {
   flex: 0 0 auto;
 }
 
-.tvHeaderActions .secondaryButton {
+.tvHeaderActions .secondaryButton,
+.tvHeaderActions .primaryButton {
   width: 132px;
   min-height: 40px;
   padding: 0 10px;
@@ -1329,8 +1358,10 @@ textarea::placeholder {
 }
 
 .playerOverlayTv {
+  isolation: isolate;
   gap: 8px;
   padding: 12px 28px 16px;
+  contain: layout paint style;
 }
 
 .playerOverlayTv [data-tv-focusable="true"] {
@@ -1373,10 +1404,35 @@ textarea::placeholder {
   gap: 10px;
   padding-bottom: 0;
   overflow: hidden;
+  contain: layout paint;
 }
 
 .playerOverlayTv .playerDetails {
   display: none;
+}
+
+.playerOverlayTvPerformance .playerFrame {
+  background: #000;
+  contain: layout paint;
+  transform: translateZ(0);
+}
+
+.playerOverlayTvPerformance .playerFrameSizer {
+  display: none;
+}
+
+.playerOverlayTvPerformance .playerEmbedMount,
+.playerOverlayTvPerformance .playerFrame iframe {
+  background: #000;
+  transform: translateZ(0);
+}
+
+.playerOverlayTvPerformance .playerTvControls {
+  contain: layout paint;
+}
+
+.playerOverlayTvPerformance .playerTvProgressTrack span {
+  background: var(--blue);
 }
 
 .playerOverlayTv .playerTvButtonRow button {

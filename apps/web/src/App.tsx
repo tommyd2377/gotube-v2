@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  ArrowUp,
   Check,
   ChevronDown,
   Clock,
@@ -49,6 +50,7 @@ type TvSection = "feed" | "watchLater" | "search" | "channels" | "channelFeed" |
 type HealthState = "checking" | "ok" | "error";
 type ChannelFeedTarget = Pick<Channel, "youtube_channel_id" | "title" | "description" | "thumbnail_url" | "custom_url" | "last_checked_at">;
 
+const NOTICE_TIMEOUT_MS = 5000;
 const tabs: Array<{ id: TabId; label: string; icon: typeof Rss }> = [
   { id: "feed", label: "Feed", icon: Rss },
   { id: "watchLater", label: "Watch Later", icon: Clock },
@@ -121,8 +123,24 @@ function useGoTubeData() {
   const [watchLater, setWatchLater] = useState<WatchLaterItem[]>([]);
   const [watchedVideos, setWatchedVideos] = useState<WatchedVideo[]>([]);
   const [health, setHealth] = useState<HealthState>("checking");
-  const [notice, setNotice] = useState("");
+  const [notice, setNoticeState] = useState("");
+  const [noticeToken, setNoticeToken] = useState(0);
   const [busy, setBusy] = useState(false);
+  const startupSyncStartedRef = useRef(false);
+
+  const setNotice = useCallback((message: string) => {
+    setNoticeState(message);
+    setNoticeToken((token) => token + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setNoticeState(""), NOTICE_TIMEOUT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [notice, noticeToken]);
 
   const refreshHealth = useCallback(async () => {
     try {
@@ -163,8 +181,10 @@ function useGoTubeData() {
   }, []);
 
   const refreshRemote = useCallback(
-    async (settingsOverride?: SettingsShape, silent = false) => {
-      setBusy(true);
+    async (settingsOverride?: SettingsShape, silent = false, manageBusy = true) => {
+      if (manageBusy) {
+        setBusy(true);
+      }
       try {
         const remoteSettings = await api.getSettings();
         const nextSettings = { ...(settingsOverride ?? settings), ...remoteSettings.settings };
@@ -194,15 +214,34 @@ function useGoTubeData() {
         if (!silent) {
           setNotice("Synced with GoTube backend.");
         }
+        return true;
       } catch (cause) {
         if (!silent) {
           setNotice(describeError(cause));
         }
+        return false;
+      } finally {
+        if (manageBusy) {
+          setBusy(false);
+        }
+      }
+    },
+    [settings, setNotice]
+  );
+
+  const syncAllQuietly = useCallback(
+    async (settingsOverride: SettingsShape) => {
+      setBusy(true);
+      try {
+        await api.syncAll();
+        await refreshRemote(settingsOverride, true, false);
+      } catch {
+        // Startup sync is a best-effort freshness pass; cached and backend-loaded data still render.
       } finally {
         setBusy(false);
       }
     },
-    [refreshFeed, settings]
+    [refreshRemote]
   );
 
   const loadOlderFeed = useCallback(async () => {
@@ -229,6 +268,11 @@ function useGoTubeData() {
   }, [feedCursor, loadingOlder, settings]);
 
   useEffect(() => {
+    if (startupSyncStartedRef.current) {
+      return;
+    }
+
+    startupSyncStartedRef.current = true;
     let cancelled = false;
 
     void (async () => {
@@ -238,7 +282,10 @@ function useGoTubeData() {
       }
       await refreshHealth();
       if (!cancelled && getSyncKey()) {
-        await refreshRemote(cachedSettings, true);
+        const remoteLoaded = await refreshRemote(cachedSettings, true);
+        if (!cancelled && remoteLoaded) {
+          await syncAllQuietly(cachedSettings);
+        }
       }
     })();
 
@@ -270,8 +317,8 @@ function useGoTubeData() {
       for (const channel of channelResponse.channels) {
         await api.syncChannel(channel.youtube_channel_id);
       }
-      await refreshRemote(settings);
-      setNotice("Manual refresh complete.");
+      const refreshed = await refreshRemote(settings, true, false);
+      setNotice(refreshed ? "Manual refresh complete." : "Manual refresh synced, but GoTube data could not reload.");
     } catch (cause) {
       setNotice(describeError(cause));
     } finally {
@@ -539,6 +586,7 @@ function TvKeyboardOverlay({
 function DesktopApp() {
   const data = useGoTubeData();
   const [activeTab, setActiveTab] = useState<TabId>("feed");
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [searchType, setSearchType] = useState<"video" | "channel">("video");
   const [query, setQuery] = useState("");
@@ -561,6 +609,16 @@ function DesktopApp() {
     () => Boolean(selectedChannel && data.channels.some((channel) => channel.youtube_channel_id === selectedChannel.youtube_channel_id)),
     [data.channels, selectedChannel]
   );
+
+  useEffect(() => {
+    function onScroll() {
+      setShowBackToTop(window.scrollY > 420);
+    }
+
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   function playVideo(video: Video) {
     setSelectedVideo(withWatchedState(video, watchedById.get(video.youtube_video_id)));
@@ -786,7 +844,7 @@ function DesktopApp() {
         })}
       </nav>
 
-      {data.notice ? <div className="notice">{data.notice}</div> : null}
+      {data.notice ? <div className="notice" role="status">{data.notice}</div> : null}
 
       <main className="content">
         {activeTab === "feed" ? (
@@ -836,7 +894,7 @@ function DesktopApp() {
                   )}
                 </div>
               ) : (
-                <button className="primaryButton" onClick={data.syncAll} disabled={data.busy} aria-busy={data.busy}>
+                <button className="primaryButton" onClick={() => void data.syncAll()} disabled={data.busy} aria-busy={data.busy}>
                   <RefreshCw className={data.busy ? "spinIcon" : undefined} aria-hidden="true" />
                   {data.busy ? "Refreshing" : "Manual Refresh"}
                 </button>
@@ -1141,6 +1199,18 @@ function DesktopApp() {
           onProgress={data.saveProgress}
           onChannelOpen={openVideoChannel}
         />
+      ) : null}
+
+      {showBackToTop ? (
+        <button
+          className="backToTopButton"
+          type="button"
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          aria-label="Back to top"
+        >
+          <ArrowUp aria-hidden="true" />
+          Top
+        </button>
       ) : null}
     </div>
   );
@@ -1450,7 +1520,11 @@ function TvApp() {
   }
 
   return (
-    <div className="tvShell">
+    <div className={selectedVideo ? "tvShell tvShellPlayback" : "tvShell"}>
+      {selectedVideo ? (
+        <PlayerOverlay video={selectedVideo} tvMode onClose={closeTvVideo} onProgress={data.saveProgress} />
+      ) : (
+        <>
       <header className="tvHeader">
         <button className="brandHomeButton tvBrandHomeButton" type="button" onClick={() => goToSection("feed")} aria-label="Go to Feed">
           <div className="brandMark">
@@ -1477,6 +1551,17 @@ function TvApp() {
           <a href="/" className="secondaryButton" data-tv-focusable="true">
             Standard
           </a>
+          <button
+            className="primaryButton"
+            type="button"
+            onClick={() => void data.syncAll()}
+            disabled={data.busy}
+            aria-busy={data.busy}
+            data-tv-focusable="true"
+          >
+            <RefreshCw className={data.busy ? "spinIcon" : undefined} aria-hidden="true" />
+            {data.busy ? "Refreshing" : "Refresh"}
+          </button>
           <button
             className="secondaryButton"
             type="button"
@@ -1524,7 +1609,7 @@ function TvApp() {
         </button>
       </nav>
 
-      {data.notice ? <div className="tvNotice">{data.notice}</div> : null}
+      {data.notice ? <div className="tvNotice" role="status">{data.notice}</div> : null}
 
       <main className="tvContent">
         {section === "feed" ? (
@@ -1767,7 +1852,8 @@ function TvApp() {
         />
       ) : null}
 
-      {selectedVideo ? <PlayerOverlay video={selectedVideo} tvMode onClose={closeTvVideo} onProgress={data.saveProgress} /> : null}
+        </>
+      )}
     </div>
   );
 }

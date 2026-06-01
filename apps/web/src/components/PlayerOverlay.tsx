@@ -44,6 +44,10 @@ let apiPromise: Promise<void> | null = null;
 const TV_SEEK_SECONDS = 30;
 const TV_SEEK_ACCELERATION_SECONDS = [30, 60, 120, 300];
 const FULLSCREEN_CONTROLS_IDLE_MS = 10000;
+const TV_PREFERRED_PLAYBACK_QUALITY = "hd720";
+const TV_PROGRESS_POLL_PLAYING_MS = 2500;
+const TV_PROGRESS_POLL_IDLE_MS = 5000;
+const TV_PROGRESS_SAVE_MS = 30000;
 
 type SeekFeedback = {
   amountLabel: string;
@@ -77,6 +81,7 @@ function directEmbedUrl(videoId: string, startSeconds: number) {
   url.searchParams.set("playsinline", "1");
   url.searchParams.set("controls", "1");
   url.searchParams.set("autoplay", "0");
+  url.searchParams.set("vq", TV_PREFERRED_PLAYBACK_QUALITY);
   if (startSeconds > 0) {
     url.searchParams.set("start", String(Math.floor(startSeconds)));
   }
@@ -133,6 +138,22 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
   function sendDirectPlayerCommand(func: string, args: Array<string | number | boolean> = []) {
     directIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args }), "https://www.youtube.com");
+  }
+
+  function applyTvPlaybackQuality() {
+    if (!useDirectTvEmbed) {
+      return;
+    }
+    sendDirectPlayerCommand("setPlaybackQuality", [TV_PREFERRED_PLAYBACK_QUALITY]);
+  }
+
+  function scheduleTvPlaybackQuality() {
+    if (!useDirectTvEmbed) {
+      return;
+    }
+    applyTvPlaybackQuality();
+    window.setTimeout(applyTvPlaybackQuality, 600);
+    window.setTimeout(applyTvPlaybackQuality, 1800);
   }
 
   function setDirectProgress(seconds: number) {
@@ -253,6 +274,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
       state.startedAtMs = Date.now();
       state.playing = true;
+      applyTvPlaybackQuality();
       sendDirectPlayerCommand("playVideo");
       setPlaying(true);
       return;
@@ -426,6 +448,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
       state.startedAtMs = Date.now();
       state.playing = true;
+      applyTvPlaybackQuality();
       setPlaying(true);
     }
 
@@ -437,21 +460,24 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     if (!ready) {
       return;
     }
-    const interval = window.setInterval(updateProgressState, playing ? 1000 : 3000);
+    const interval = window.setInterval(
+      updateProgressState,
+      tvMode ? (playing ? TV_PROGRESS_POLL_PLAYING_MS : TV_PROGRESS_POLL_IDLE_MS) : (playing ? 1000 : 3000)
+    );
     return () => window.clearInterval(interval);
-  }, [playing, ready, video.duration_seconds]);
+  }, [playing, ready, tvMode, video.duration_seconds]);
 
   useEffect(() => {
     if (!onProgress) {
       return;
     }
 
-    const interval = window.setInterval(() => saveCurrentProgress(false), 15000);
+    const interval = window.setInterval(() => saveCurrentProgress(false), tvMode ? TV_PROGRESS_SAVE_MS : 15000);
     return () => {
       window.clearInterval(interval);
       saveCurrentProgress(false);
     };
-  }, [onProgress, video]);
+  }, [onProgress, tvMode, video]);
 
   useEffect(() => {
     return () => {
@@ -621,6 +647,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       className={[
         "playerOverlay",
         tvMode ? "playerOverlayTv" : "",
+        tvMode ? "playerOverlayTvPerformance" : "",
         fullscreen ? "playerOverlayFullscreen" : ""
       ].filter(Boolean).join(" ")}
       role="dialog"
@@ -668,7 +695,10 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
                 src={tvEmbedSrc}
                 allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
                 allowFullScreen
-                onLoad={() => setReady(true)}
+                onLoad={() => {
+                  setReady(true);
+                  scheduleTvPlaybackQuality();
+                }}
               />
             ) : null}
           </div>
