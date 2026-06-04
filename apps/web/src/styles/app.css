@@ -1470,6 +1470,12 @@ textarea::placeholder {
   border-radius: 0;
 }
 
+.playerOverlayTv.playerOverlayFullscreen .playerFrame:focus {
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
 .playerOverlayFullscreen .playerEmbedMount,
 .playerOverlayFullscreen .playerFrame iframe {
   border-radius: 0;

@@ -59,6 +59,7 @@ const tabs: Array<{ id: TabId; label: string; icon: typeof Rss }> = [
   { id: "settings", label: "Settings", icon: Settings }
 ];
 const FEED_PAGE_SIZE = 20;
+const CHANNEL_PAGE_SIZE = 10;
 
 function describeError(cause: unknown) {
   if (cause instanceof ApiError && cause.status === 401) {
@@ -624,21 +625,20 @@ function DesktopApp() {
     setSelectedVideo(withWatchedState(video, watchedById.get(video.youtube_video_id)));
   }
 
-  async function loadChannelFeed(channel: ChannelFeedTarget, before: string | null = null) {
+  async function loadChannelFeed(channel: ChannelFeedTarget, pageToken: string | null = null) {
     setChannelFeedLoading(true);
     try {
-      const response = await api.feed(data.settings, {
-        limit: FEED_PAGE_SIZE,
-        before,
-        channelId: channel.youtube_channel_id
+      const response = await api.syncChannelPage(channel.youtube_channel_id, {
+        limit: CHANNEL_PAGE_SIZE,
+        pageToken
       });
       const videos = visibleVideos(response.videos);
-      setChannelFeed((items) => (before ? appendUniqueVideos(items, videos) : videos));
-      setChannelFeedCursor(response.nextCursor);
+      setChannelFeed((items) => (pageToken ? appendUniqueVideos(items, videos) : videos));
+      setChannelFeedCursor(response.nextPageToken);
       setChannelFeedHasMore(response.hasMore);
       await cacheVideos(response.videos);
-      if (!videos.length && !before) {
-        data.setNotice("No synced videos for this channel yet. Add or sync it to build this channel feed.");
+      if (!videos.length && !pageToken) {
+        data.setNotice("No regular videos found on the first channel page.");
       }
     } catch (cause) {
       data.setNotice(describeError(cause));
@@ -860,7 +860,7 @@ function DesktopApp() {
                 <h2>{selectedChannel ? selectedChannel.title : "Feed"}</h2>
                 <p>
                   {selectedChannel
-                    ? "Reverse-chronological uploads from this channel only."
+                    ? "Newest uploads from this channel only. Show more to keep going back."
                     : "Reverse-chronological uploads from your saved channels only. GoTube shows 20 at a time."}
                 </p>
               </div>
@@ -924,7 +924,7 @@ function DesktopApp() {
                         disabled={channelFeedLoading || data.busy}
                       >
                         <ChevronDown aria-hidden="true" />
-                        {channelFeedLoading ? "Loading Older" : "Load Older"}
+                        {channelFeedLoading ? "Loading More" : "Show More"}
                       </button>
                     </div>
                   ) : null
@@ -938,14 +938,28 @@ function DesktopApp() {
                 ) : null}
               </>
             ) : (
-              <EmptyState
-                title={selectedChannel ? "No synced videos for this channel" : "No feed videos yet"}
-                body={
-                  selectedChannel
-                    ? "Add or sync this channel to load its latest uploads into GoTube."
-                    : "Add a channel in Search or Channels, then sync it to build your private feed."
-                }
-              />
+              <>
+                <EmptyState
+                  title={selectedChannel ? "No regular videos found" : "No feed videos yet"}
+                  body={
+                    selectedChannel
+                      ? "Try showing more older uploads from this channel."
+                      : "Add a channel in Search or Channels, then sync it to build your private feed."
+                  }
+                />
+                {selectedChannel && channelFeedHasMore ? (
+                  <div className="loadMoreRow">
+                    <button
+                      className="secondaryButton"
+                      onClick={() => loadChannelFeed(selectedChannel, channelFeedCursor)}
+                      disabled={channelFeedLoading || data.busy}
+                    >
+                      <ChevronDown aria-hidden="true" />
+                      {channelFeedLoading ? "Loading More" : "Show More"}
+                    </button>
+                  </div>
+                ) : null}
+              </>
             )}
           </section>
         ) : null}
@@ -1309,21 +1323,20 @@ function TvApp() {
     return () => window.removeEventListener("focusin", onFocusIn);
   }, [activeActionCardId]);
 
-  async function loadChannelFeed(channel: Channel, before: string | null = null) {
+  async function loadChannelFeed(channel: Channel, pageToken: string | null = null) {
     setChannelFeedLoading(true);
     try {
-      const response = await api.feed(data.settings, {
-        limit: FEED_PAGE_SIZE,
-        before,
-        channelId: channel.youtube_channel_id
+      const response = await api.syncChannelPage(channel.youtube_channel_id, {
+        limit: CHANNEL_PAGE_SIZE,
+        pageToken
       });
       const videos = visibleVideos(response.videos);
-      setChannelFeed((items) => (before ? appendUniqueVideos(items, videos) : videos));
-      setChannelFeedCursor(response.nextCursor);
+      setChannelFeed((items) => (pageToken ? appendUniqueVideos(items, videos) : videos));
+      setChannelFeedCursor(response.nextPageToken);
       setChannelFeedHasMore(response.hasMore);
       await cacheVideos(response.videos);
-      if (!videos.length && !before) {
-        data.setNotice("No synced videos for this channel yet.");
+      if (!videos.length && !pageToken) {
+        data.setNotice("No regular videos found on the first channel page.");
       }
     } catch (cause) {
       data.setNotice(describeError(cause));
@@ -1788,13 +1801,28 @@ function TvApp() {
                       data-tv-focusable="true"
                     >
                       <ChevronDown aria-hidden="true" />
-                      {channelFeedLoading ? "Loading Older" : "Load Older"}
+                      {channelFeedLoading ? "Loading More" : "Show More"}
                     </button>
                   </div>
                 ) : null}
               </>
             ) : (
-              <EmptyState title="No synced videos" body="Sync this channel to build its TV feed." />
+              <>
+                <EmptyState title="No regular videos found" body="Show more older uploads from this channel." />
+                {channelFeedHasMore ? (
+                  <div className="tvLoadMoreRow">
+                    <button
+                      className="secondaryButton"
+                      onClick={loadOlderChannelFeed}
+                      disabled={channelFeedLoading}
+                      data-tv-focusable="true"
+                    >
+                      <ChevronDown aria-hidden="true" />
+                      {channelFeedLoading ? "Loading More" : "Show More"}
+                    </button>
+                  </div>
+                ) : null}
+              </>
             )}
           </section>
         ) : null}

@@ -1,4 +1,4 @@
-import type { Channel, FeedResponse, SearchResult, SettingsShape, Video, WatchLaterItem } from "./types";
+import type { Channel, ChannelPageResponse, FeedResponse, SearchResult, SettingsShape, Video, WatchLaterItem } from "./types";
 
 const DEFAULT_API_BASE = import.meta.env.PROD ? "https://gotube-api.gotube-215613.workers.dev/api" : "/api";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE;
@@ -74,6 +74,14 @@ export const api = {
       `/sync-channel/${encodeURIComponent(youtubeChannelId)}`,
       { method: "POST" }
     ),
+  syncChannelPage: (
+    youtubeChannelId: string,
+    options: { limit?: number; pageToken?: string | null } = {}
+  ) =>
+    apiFetch<ChannelPageResponse>(`/sync-channel-page/${encodeURIComponent(youtubeChannelId)}`, {
+      method: "POST",
+      body: JSON.stringify(options)
+    }),
   syncAll: (force = false) =>
     apiFetch<{ results: Array<{ channel: Channel; count?: number; skipped?: boolean; videos: Video[] }> }>(
       `/sync-all${force ? "?force=true" : ""}`,

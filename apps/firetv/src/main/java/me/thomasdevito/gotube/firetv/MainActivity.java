@@ -1,4 +1,4 @@
-package me.thomasdevito.gotube.firetv;
+package me.thomasdevito.gotube.firetv27;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
@@ -39,7 +39,7 @@ public final class MainActivity extends Activity {
   private ImageView splashView;
   private long splashStartedAtMillis;
   private String allowedTopLevelHost = LOCAL_HOST;
-  private String appStartUrl = LOCAL_ORIGIN + "/tv";
+  private String appStartUrl = LOCAL_ORIGIN + "/tv?nativeShell=firetv";
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
@@ -49,7 +49,7 @@ public final class MainActivity extends Activity {
     getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
     String configuredTvUrl = readNativeConfig("tvUrl");
-    String startUrl = configuredTvUrl.isEmpty() ? LOCAL_ORIGIN + "/tv" : configuredTvUrl;
+    String startUrl = withNativeShellParam(configuredTvUrl.isEmpty() ? LOCAL_ORIGIN + "/tv" : configuredTvUrl);
     appStartUrl = startUrl;
     Uri startUri = Uri.parse(startUrl);
     if (startUri.getHost() != null) {
@@ -349,6 +349,14 @@ public final class MainActivity extends Activity {
     } catch (IOException ignored) {
       return "";
     }
+  }
+
+  private String withNativeShellParam(String url) {
+    Uri uri = Uri.parse(url);
+    return uri.buildUpon()
+      .appendQueryParameter("nativeShell", "firetv")
+      .build()
+      .toString();
   }
 
   private final class GoTubeWebChromeClient extends WebChromeClient {

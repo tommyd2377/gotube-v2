@@ -35,6 +35,15 @@ export interface FeedResponse {
   hasMore: boolean;
 }
 
+export interface ChannelPageResponse {
+  channel: Channel;
+  count?: number;
+  skipped?: boolean;
+  videos: Video[];
+  nextPageToken: string | null;
+  hasMore: boolean;
+}
+
 export interface WatchLaterItem {
   id?: string;
   youtube_video_id: string;

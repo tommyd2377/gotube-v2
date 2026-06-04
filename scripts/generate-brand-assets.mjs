@@ -7,12 +7,21 @@ const WEB_PUBLIC = path.join(ROOT, "apps/web/public");
 const BRAND_DIR = path.join(WEB_PUBLIC, "brand");
 const FIRETV_DRAWABLE_NODPI = path.join(ROOT, "apps/firetv/src/main/res/drawable-nodpi");
 const FIRETV_MIPMAPS = [
-  ["mipmap-mdpi", 48],
-  ["mipmap-hdpi", 72],
-  ["mipmap-xhdpi", 96],
-  ["mipmap-xxhdpi", 144],
-  ["mipmap-xxxhdpi", 192]
+  ["mipmap-mdpi", 96],
+  ["mipmap-hdpi", 144],
+  ["mipmap-xhdpi", 192],
+  ["mipmap-xxhdpi", 288],
+  ["mipmap-xxxhdpi", 384]
 ];
+const FIRETV_BANNERS = [
+  ["drawable-mdpi", 160, 90],
+  ["drawable-hdpi", 240, 135],
+  ["drawable-xhdpi", 320, 180],
+  ["drawable-xxhdpi", 480, 270],
+  ["drawable-xxxhdpi", 640, 360]
+];
+const FIRETV_LAUNCHER_ICON = "ic_launcher_firetv";
+const FIRETV_LEANBACK_BANNER = "gotube_leanback_banner";
 
 const BLUE = "#168BFF";
 const BLUE_BRIGHT = "#34A3FF";
@@ -129,6 +138,21 @@ function iconSvg() {
   </svg>`;
 }
 
+function fireTvLauncherSvg() {
+  return iconSvg();
+}
+
+function fireTvLauncherBannerSvg() {
+  return `<svg width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+    ${defs()}
+    ${backdrop(1920, 1080, 1.05)}
+    <g transform="translate(614 194) scale(0.676)">
+      <rect width="1024" height="1024" rx="210" fill="${BG}"/>
+      ${logoMark({ frame: true })}
+    </g>
+  </svg>`;
+}
+
 function markSvg(variant) {
   const bg =
     variant === "white"
@@ -213,6 +237,8 @@ async function copyFile(from, to) {
 }
 
 const icon = iconSvg();
+const fireTvLauncher = fireTvLauncherSvg();
+const fireTvLauncherBanner = fireTvLauncherBannerSvg();
 const splash = splashSvg();
 const tvBanner = tvBannerSvg();
 const og = ogImageSvg();
@@ -260,12 +286,19 @@ await renderPng(splash, "apps/web/public/brand/gotube-splash-3840x2160.png", 384
 await renderPng(tvBanner, "apps/web/public/brand/gotube-tv-banner-1920x1080.png", 1920, 1080);
 await renderPng(og, "apps/web/public/og-image.png", 1200, 630);
 
-await copyFile(path.join(WEB_PUBLIC, "brand/gotube-icon-1024.png"), path.join(FIRETV_DRAWABLE_NODPI, "gotube_launcher_icon.png"));
 await copyFile(path.join(WEB_PUBLIC, "brand/gotube-tv-banner-1920x1080.png"), path.join(FIRETV_DRAWABLE_NODPI, "gotube_tv_banner.png"));
 await copyFile(path.join(WEB_PUBLIC, "brand/gotube-splash-3840x2160.png"), path.join(FIRETV_DRAWABLE_NODPI, "gotube_splash.png"));
 
+await fs.rm(path.join(FIRETV_DRAWABLE_NODPI, "gotube_launcher_icon.png"), { force: true });
+await fs.rm(path.join(FIRETV_DRAWABLE_NODPI, "gotube_launcher_banner.png"), { force: true });
+
 for (const [density, size] of FIRETV_MIPMAPS) {
-  await renderPng(icon, `apps/firetv/src/main/res/${density}/ic_launcher.png`, size);
+  await fs.rm(path.join(ROOT, `apps/firetv/src/main/res/${density}/ic_launcher.png`), { force: true });
+  await renderPng(fireTvLauncher, `apps/firetv/src/main/res/${density}/${FIRETV_LAUNCHER_ICON}.png`, size);
+}
+
+for (const [density, width, height] of FIRETV_BANNERS) {
+  await renderPng(fireTvLauncherBanner, `apps/firetv/src/main/res/${density}/${FIRETV_LEANBACK_BANNER}.png`, width, height);
 }
 
 console.log("Generated GoTube brand assets.");

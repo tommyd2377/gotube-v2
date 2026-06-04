@@ -105,6 +105,13 @@ type YouTubeChannelItem = {
     relatedPlaylists?: { uploads?: string };
   };
 };
+type YouTubePlaylistItemsResponse = {
+  nextPageToken?: string;
+  items: Array<{
+    contentDetails?: { videoId?: string; videoPublishedAt?: string };
+    snippet?: { publishedAt?: string };
+  }>;
+};
 
 const SHORTS_DURATION_SECONDS = 180;
 const DEFAULT_SETTINGS: SettingsShape = {
@@ -114,6 +121,9 @@ const DEFAULT_SETTINGS: SettingsShape = {
 };
 const DEFAULT_FEED_LIMIT = 20;
 const MAX_FEED_LIMIT = 50;
+const CHANNEL_PAGE_LIMIT = 10;
+const MAX_CHANNEL_PAGE_LIMIT = 50;
+const CHANNEL_PAGE_LOOKAHEAD_PAGES = 5;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -183,6 +193,14 @@ function feedLimitFromUrl(url: URL) {
     return DEFAULT_FEED_LIMIT;
   }
   return Math.min(Math.max(Math.trunc(requested), 1), MAX_FEED_LIMIT);
+}
+
+function channelPageLimitFromValue(value?: number | null) {
+  const requested = Number(value ?? CHANNEL_PAGE_LIMIT);
+  if (!Number.isFinite(requested)) {
+    return CHANNEL_PAGE_LIMIT;
+  }
+  return Math.min(Math.max(Math.trunc(requested), 1), MAX_CHANNEL_PAGE_LIMIT);
 }
 
 function feedCursorFromUrl(url: URL): { publishedAt: string; youtubeVideoId: string | null } | null {
@@ -806,6 +824,88 @@ async function fetchVideoDetails(env: Env, youtubeVideoIds: string[], shortsThre
   });
 }
 
+async function getChannelForPagedSync(env: Env, youtubeChannelId: string) {
+  const existingChannel = await getChannel(env, youtubeChannelId);
+  if (existingChannel?.uploads_playlist_id) {
+    return { channel: existingChannel, saved: !existingChannel.hidden };
+  }
+
+  const metadata = await fetchChannelMetadata(env, youtubeChannelId);
+  if (existingChannel && !existingChannel.hidden) {
+    const channel = await upsertChannel(env, {
+      ...metadata,
+      id: existingChannel.id,
+      added_at: existingChannel.added_at,
+      hidden: existingChannel.hidden ?? false
+    });
+    return { channel, saved: true };
+  }
+
+  return { channel: metadata, saved: false };
+}
+
+async function fetchChannelUploadsPage(env: Env, channel: ChannelRow, pageToken: string | null, limit: number) {
+  if (!channel.uploads_playlist_id) {
+    throw new Error("Channel does not have an uploads playlist.");
+  }
+
+  const params: Record<string, string> = {
+    part: "contentDetails,snippet",
+    playlistId: channel.uploads_playlist_id,
+    maxResults: String(limit)
+  };
+  if (pageToken) {
+    params.pageToken = pageToken;
+  }
+
+  return youtubeFetch<YouTubePlaylistItemsResponse>(env, "playlistItems", params);
+}
+
+async function syncChannelPage(
+  env: Env,
+  youtubeChannelId: string,
+  options: { pageToken?: string | null; limit?: number | null } = {}
+) {
+  const { channel, saved } = await getChannelForPagedSync(env, youtubeChannelId);
+  const settings = await getSettings(env);
+  const limit = channelPageLimitFromValue(options.limit);
+  const videos: VideoRow[] = [];
+  let pageToken = options.pageToken ?? null;
+  let nextPageToken: string | null = null;
+  let pagesFetched = 0;
+
+  do {
+    const playlist = await fetchChannelUploadsPage(env, channel, pageToken, limit);
+    const ids = playlist.items
+      .map((item) => item.contentDetails?.videoId)
+      .filter((id): id is string => Boolean(id));
+    const pageVideos = (await fetchVideoDetails(env, ids, settings.shortsThresholdSeconds)).filter(
+      (video) => !isShortFormVideo(video, settings.shortsThresholdSeconds)
+    );
+    videos.push(...pageVideos);
+    nextPageToken = playlist.nextPageToken ?? null;
+    pageToken = nextPageToken;
+    pagesFetched += 1;
+  } while (videos.length < limit && nextPageToken && pagesFetched < CHANNEL_PAGE_LOOKAHEAD_PAGES);
+
+  const storedVideos = videos.length ? await upsertVideos(env, videos) : [];
+  if (saved) {
+    await updateChannelCheckedAt(env, youtubeChannelId);
+  }
+
+  const responseChannel = (saved ? await getChannel(env, youtubeChannelId) : null) ?? channel;
+  const watched = await listWatched(env);
+
+  return {
+    skipped: false,
+    channel: responseChannel,
+    count: storedVideos.length,
+    videos: storedVideos.sort(compareFeedVideos).map((video) => withChannelInfo(video, [responseChannel], watched)),
+    nextPageToken,
+    hasMore: Boolean(nextPageToken)
+  };
+}
+
 async function syncChannel(env: Env, youtubeChannelId: string, force = true) {
   let channel = await getChannel(env, youtubeChannelId);
   if (!channel) {
@@ -823,14 +923,7 @@ async function syncChannel(env: Env, youtubeChannelId: string, force = true) {
     throw new Error("Channel does not have an uploads playlist.");
   }
 
-  type PlaylistResponse = {
-    items: Array<{
-      contentDetails?: { videoId?: string; videoPublishedAt?: string };
-      snippet?: { publishedAt?: string };
-    }>;
-  };
-
-  const playlist = await youtubeFetch<PlaylistResponse>(env, "playlistItems", {
+  const playlist = await youtubeFetch<YouTubePlaylistItemsResponse>(env, "playlistItems", {
     part: "contentDetails,snippet",
     playlistId: channel.uploads_playlist_id,
     maxResults: "25"
@@ -962,6 +1055,11 @@ async function handleRequest(request: Request, env: Env) {
 
   if (resource === "sync-channel" && request.method === "POST" && id) {
     return json(await syncChannel(env, decodeURIComponent(id), true));
+  }
+
+  if (resource === "sync-channel-page" && request.method === "POST" && id) {
+    const body = await parseJsonBody<{ pageToken?: string | null; limit?: number | null }>(request);
+    return json(await syncChannelPage(env, decodeURIComponent(id), body));
   }
 
   if (resource === "sync-all" && request.method === "POST") {
