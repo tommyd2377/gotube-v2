@@ -14,6 +14,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -40,13 +41,13 @@ public final class MainActivity extends Activity {
   private long splashStartedAtMillis;
   private String allowedTopLevelHost = LOCAL_HOST;
   private String appStartUrl = LOCAL_ORIGIN + "/tv?nativeShell=firetv";
+  private boolean keepScreenOn;
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
     requestWindowFeature(Window.FEATURE_NO_TITLE);
     getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-    getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
     String configuredTvUrl = readNativeConfig("tvUrl");
     String startUrl = withNativeShellParam(configuredTvUrl.isEmpty() ? LOCAL_ORIGIN + "/tv" : configuredTvUrl);
@@ -98,6 +99,7 @@ public final class MainActivity extends Activity {
       settings.setSafeBrowsingEnabled(true);
     }
 
+    view.addJavascriptInterface(new GoTubeNativeBridge(), "GoTubeNative");
     CookieManager cookieManager = CookieManager.getInstance();
     cookieManager.setAcceptCookie(true);
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -170,7 +172,14 @@ public final class MainActivity extends Activity {
   }
 
   @Override
+  protected void onPause() {
+    setDisplayKeepScreenOn(false);
+    super.onPause();
+  }
+
+  @Override
   protected void onDestroy() {
+    setDisplayKeepScreenOn(false);
     if (webView != null) {
       webView.destroy();
       webView = null;
@@ -331,6 +340,7 @@ public final class MainActivity extends Activity {
     if (webView == null) {
       return;
     }
+    setDisplayKeepScreenOn(false);
     Uri uri = new Uri.Builder()
       .scheme("https")
       .authority("accounts.google.com")
@@ -377,6 +387,32 @@ public final class MainActivity extends Activity {
     }
   }
 
+  private void setDisplayKeepScreenOn(boolean enabled) {
+    if (keepScreenOn == enabled) {
+      return;
+    }
+    keepScreenOn = enabled;
+    if (enabled) {
+      getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    } else {
+      getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+  }
+
+  private final class GoTubeNativeBridge {
+    @JavascriptInterface
+    public void setKeepScreenOn(final boolean enabled) {
+      runOnUiThread(new Runnable() {
+        @Override
+        public void run() {
+          if (webView != null && isAppUrl(webView.getUrl())) {
+            setDisplayKeepScreenOn(enabled);
+          }
+        }
+      });
+    }
+  }
+
   private final class GoTubeWebViewClient extends WebViewClient {
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -390,6 +426,9 @@ public final class MainActivity extends Activity {
     @Override
     public void onPageFinished(WebView view, String url) {
       CookieManager.getInstance().flush();
+      if (!isAppUrl(url)) {
+        setDisplayKeepScreenOn(false);
+      }
       hideSplash();
     }
 

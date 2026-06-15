@@ -1529,6 +1529,7 @@ textarea::placeholder {
     margin-inline: -10px;
     padding-inline: 10px;
     padding-bottom: 18px;
+    scroll-padding-inline: 10px;
     scroll-snap-type: x proximity;
   }
 

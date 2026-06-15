@@ -27,6 +27,9 @@ declare global {
       };
     };
     onYouTubeIframeAPIReady?: () => void;
+    GoTubeNative?: {
+      setKeepScreenOn: (enabled: boolean) => void;
+    };
   }
 }
 
@@ -86,6 +89,14 @@ function directEmbedUrl(videoId: string, startSeconds: number) {
     url.searchParams.set("start", String(Math.floor(startSeconds)));
   }
   return url.toString();
+}
+
+function setNativeKeepScreenOn(enabled: boolean) {
+  try {
+    window.GoTubeNative?.setKeepScreenOn(enabled);
+  } catch {
+    // The native bridge is available only inside the Fire TV APK shell.
+  }
 }
 
 interface PlayerOverlayProps {
@@ -455,6 +466,15 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     window.addEventListener("gotube-tv-native-player-tap", onNativePlayerTap);
     return () => window.removeEventListener("gotube-tv-native-player-tap", onNativePlayerTap);
   }, [useDirectTvEmbed, video]);
+
+  useEffect(() => {
+    if (!tvMode) {
+      return;
+    }
+
+    setNativeKeepScreenOn(playing);
+    return () => setNativeKeepScreenOn(false);
+  }, [playing, tvMode]);
 
   useEffect(() => {
     if (!ready) {
