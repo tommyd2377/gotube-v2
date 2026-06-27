@@ -51,10 +51,28 @@ const TV_PREFERRED_PLAYBACK_QUALITY = "hd720";
 const TV_PROGRESS_POLL_PLAYING_MS = 2500;
 const TV_PROGRESS_POLL_IDLE_MS = 5000;
 const TV_PROGRESS_SAVE_MS = 30000;
+const TV_DIRECT_PLAYER_SYNC_MS = 1000;
+const TV_DIRECT_PLAYER_STATE = {
+  UNSTARTED: -1,
+  ENDED: 0,
+  PLAYING: 1,
+  PAUSED: 2,
+  BUFFERING: 3,
+  CUED: 5
+};
 
 type SeekFeedback = {
   amountLabel: string;
   targetLabel: string;
+};
+
+type DirectPlayerMessage = {
+  event?: string;
+  info?: number | {
+    currentTime?: number;
+    duration?: number;
+    playerState?: number;
+  };
 };
 
 function loadYouTubeApi() {
@@ -89,6 +107,30 @@ function directEmbedUrl(videoId: string, startSeconds: number) {
     url.searchParams.set("start", String(Math.floor(startSeconds)));
   }
   return url.toString();
+}
+
+function parseDirectPlayerMessage(data: unknown): DirectPlayerMessage | null {
+  const payload = typeof data === "string"
+    ? (() => {
+        try {
+          return JSON.parse(data) as unknown;
+        } catch {
+          return null;
+        }
+      })()
+    : data;
+
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  return payload as DirectPlayerMessage;
+}
+
+function isDirectPlayerMessageSource(event: MessageEvent, iframe: HTMLIFrameElement | null) {
+  const isFrameSource = Boolean(iframe?.contentWindow && event.source === iframe.contentWindow);
+  const isYouTubeOrigin = /^https:\/\/([a-z0-9-]+\.)?youtube(-nocookie)?\.com$/i.test(event.origin);
+  return isFrameSource || isYouTubeOrigin;
 }
 
 function setNativeKeepScreenOn(enabled: boolean) {
@@ -158,6 +200,21 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     sendDirectPlayerCommand("setPlaybackQuality", [TV_PREFERRED_PLAYBACK_QUALITY]);
   }
 
+  function requestDirectPlayerSnapshot() {
+    if (!useDirectTvEmbed) {
+      return;
+    }
+    sendDirectPlayerCommand("getCurrentTime");
+    sendDirectPlayerCommand("getDuration");
+    sendDirectPlayerCommand("getPlayerState");
+  }
+
+  function scheduleDirectPlayerSnapshot() {
+    requestDirectPlayerSnapshot();
+    window.setTimeout(requestDirectPlayerSnapshot, 250);
+    window.setTimeout(requestDirectPlayerSnapshot, 900);
+  }
+
   function scheduleTvPlaybackQuality() {
     if (!useDirectTvEmbed) {
       return;
@@ -183,6 +240,9 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   }
 
   function currentDurationSeconds() {
+    if (useDirectTvEmbed) {
+      return durationSeconds > 0 ? durationSeconds : (video.duration_seconds ?? 0);
+    }
     const duration = playerRef.current?.getDuration();
     if (typeof duration === "number" && Number.isFinite(duration) && duration > 0) {
       return Math.floor(duration);
@@ -204,7 +264,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     }
 
     const progressSeconds = completed
-      ? (video.duration_seconds ?? currentProgressSeconds())
+      ? (currentDurationSeconds() || currentProgressSeconds())
       : (overrideProgressSeconds ?? currentProgressSeconds());
     if (!completed && progressSeconds < 5) {
       return;
@@ -216,6 +276,75 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
     lastSavedProgressRef.current = progressSeconds;
     void onProgress(video, progressSeconds, completed);
+  }
+
+  function applyDirectPlayerSnapshot(playerState?: number, currentTime?: number, duration?: number) {
+    if (!useDirectTvEmbed) {
+      return;
+    }
+
+    const state = directPlaybackRef.current;
+    const previousSeconds = state.offsetSeconds;
+    const nextSeconds =
+      typeof currentTime === "number" && Number.isFinite(currentTime) && currentTime >= 0
+        ? Math.floor(currentTime)
+        : Math.floor(directCurrentSeconds());
+    const inferredPlaying =
+      playerState === undefined &&
+      typeof currentTime === "number" &&
+      Number.isFinite(currentTime) &&
+      currentTime > previousSeconds + 0.5;
+
+    if (typeof duration === "number" && Number.isFinite(duration) && duration > 0) {
+      setDurationSeconds(Math.floor(duration));
+    }
+
+    if (typeof currentTime === "number" && Number.isFinite(currentTime) && currentTime >= 0) {
+      state.offsetSeconds = nextSeconds;
+      state.startedAtMs = Date.now();
+      setCurrentSeconds(nextSeconds);
+    }
+
+    if (playerState === TV_DIRECT_PLAYER_STATE.PLAYING) {
+      state.offsetSeconds = nextSeconds;
+      state.startedAtMs = Date.now();
+      state.playing = true;
+      setPlaying(true);
+      setCurrentSeconds(nextSeconds);
+      return;
+    }
+
+    if (inferredPlaying) {
+      state.offsetSeconds = nextSeconds;
+      state.startedAtMs = Date.now();
+      state.playing = true;
+      setPlaying(true);
+      setCurrentSeconds(nextSeconds);
+      return;
+    }
+
+    if (
+      playerState === TV_DIRECT_PLAYER_STATE.PAUSED ||
+      playerState === TV_DIRECT_PLAYER_STATE.CUED ||
+      playerState === TV_DIRECT_PLAYER_STATE.UNSTARTED
+    ) {
+      state.offsetSeconds = nextSeconds;
+      state.startedAtMs = Date.now();
+      state.playing = false;
+      setPlaying(false);
+      setCurrentSeconds(nextSeconds);
+      saveCurrentProgress(false, nextSeconds);
+      return;
+    }
+
+    if (playerState === TV_DIRECT_PLAYER_STATE.ENDED) {
+      state.offsetSeconds = nextSeconds;
+      state.startedAtMs = Date.now();
+      state.playing = false;
+      setPlaying(false);
+      setCurrentSeconds(nextSeconds);
+      saveCurrentProgress(true);
+    }
   }
 
   function formatSeekAmount(seconds: number) {
@@ -242,6 +371,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       setDirectProgress(nextSeconds);
       showSeekFeedback(seconds, nextSeconds);
       saveCurrentProgress(false, Math.floor(nextSeconds));
+      scheduleDirectPlayerSnapshot();
       return;
     }
 
@@ -280,6 +410,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
         setPlaying(false);
         setCurrentSeconds(state.offsetSeconds);
         saveCurrentProgress(false, state.offsetSeconds);
+        scheduleDirectPlayerSnapshot();
         return;
       }
 
@@ -288,6 +419,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       applyTvPlaybackQuality();
       sendDirectPlayerCommand("playVideo");
       setPlaying(true);
+      scheduleDirectPlayerSnapshot();
       return;
     }
     const player = playerRef.current;
@@ -446,21 +578,45 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       return;
     }
 
-    function onNativePlayerTap() {
-      const state = directPlaybackRef.current;
-      if (state.playing) {
-        state.offsetSeconds = Math.floor(directCurrentSeconds());
-        state.playing = false;
-        setPlaying(false);
-        setCurrentSeconds(state.offsetSeconds);
-        saveCurrentProgress(false, state.offsetSeconds);
+    function onDirectPlayerMessage(event: MessageEvent) {
+      if (!isDirectPlayerMessageSource(event, directIframeRef.current)) {
         return;
       }
 
-      state.startedAtMs = Date.now();
-      state.playing = true;
+      const message = parseDirectPlayerMessage(event.data);
+      if (!message) {
+        return;
+      }
+
+      if (message.event === "onReady") {
+        setReady(true);
+        scheduleTvPlaybackQuality();
+        scheduleDirectPlayerSnapshot();
+        return;
+      }
+
+      if (message.event === "onStateChange" && typeof message.info === "number") {
+        applyDirectPlayerSnapshot(message.info);
+        return;
+      }
+
+      if (message.info && typeof message.info === "object") {
+        applyDirectPlayerSnapshot(message.info.playerState, message.info.currentTime, message.info.duration);
+      }
+    }
+
+    window.addEventListener("message", onDirectPlayerMessage);
+    return () => window.removeEventListener("message", onDirectPlayerMessage);
+  }, [useDirectTvEmbed, video.youtube_video_id]);
+
+  useEffect(() => {
+    if (!useDirectTvEmbed) {
+      return;
+    }
+
+    function onNativePlayerTap() {
       applyTvPlaybackQuality();
-      setPlaying(true);
+      scheduleDirectPlayerSnapshot();
     }
 
     window.addEventListener("gotube-tv-native-player-tap", onNativePlayerTap);
@@ -486,6 +642,17 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     );
     return () => window.clearInterval(interval);
   }, [playing, ready, tvMode, video.duration_seconds]);
+
+  useEffect(() => {
+    if (!useDirectTvEmbed || !ready) {
+      return;
+    }
+
+    sendDirectPlayerCommand("addEventListener", ["onStateChange"]);
+    scheduleDirectPlayerSnapshot();
+    const interval = window.setInterval(requestDirectPlayerSnapshot, TV_DIRECT_PLAYER_SYNC_MS);
+    return () => window.clearInterval(interval);
+  }, [ready, useDirectTvEmbed, video.youtube_video_id]);
 
   useEffect(() => {
     if (!onProgress) {
@@ -717,7 +884,9 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
                 allowFullScreen
                 onLoad={() => {
                   setReady(true);
+                  sendDirectPlayerCommand("addEventListener", ["onStateChange"]);
                   scheduleTvPlaybackQuality();
+                  scheduleDirectPlayerSnapshot();
                 }}
               />
             ) : null}

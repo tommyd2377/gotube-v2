@@ -124,6 +124,9 @@ const MAX_FEED_LIMIT = 50;
 const CHANNEL_PAGE_LIMIT = 10;
 const MAX_CHANNEL_PAGE_LIMIT = 50;
 const CHANNEL_PAGE_LOOKAHEAD_PAGES = 5;
+const DEFAULT_SEARCH_RESULTS = 10;
+const VIDEO_SEARCH_RESULTS = 25;
+const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -379,6 +382,104 @@ function channelSearchResultFromRow(channel: ChannelRow) {
     thumbnail_url: channel.thumbnail_url,
     custom_url: channel.custom_url
   } satisfies SearchChannelResult;
+}
+
+function validYouTubeVideoId(value?: string | null) {
+  return value && YOUTUBE_VIDEO_ID_PATTERN.test(value) ? value : null;
+}
+
+function videoIdFromInput(input: string) {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const rawVideoId = validYouTubeVideoId(trimmed);
+  if (rawVideoId) {
+    return rawVideoId;
+  }
+
+  const urlText = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : /(^|\.)youtu\.be\//i.test(trimmed) ||
+        /(^|\.)youtube\.com\//i.test(trimmed) ||
+        /(^|\.)youtube-nocookie\.com\//i.test(trimmed)
+      ? `https://${trimmed}`
+      : null;
+
+  if (!urlText) {
+    return null;
+  }
+
+  try {
+    const url = new URL(urlText);
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    const segments = url.pathname.split("/").filter(Boolean);
+    const [first, second] = segments;
+
+    if (host === "youtu.be") {
+      return validYouTubeVideoId(first);
+    }
+
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+      const queryVideoId = validYouTubeVideoId(url.searchParams.get("v"));
+      if (queryVideoId) {
+        return queryVideoId;
+      }
+
+      if (first && ["shorts", "embed", "live", "v"].includes(first)) {
+        return validYouTubeVideoId(second);
+      }
+    }
+
+    if (host === "youtube-nocookie.com" && first === "embed") {
+      return validYouTubeVideoId(second);
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function searchVideoResultFromRow(video: VideoRow) {
+  return {
+    type: "video",
+    youtube_video_id: video.youtube_video_id,
+    youtube_channel_id: video.youtube_channel_id,
+    title: video.title,
+    description: video.description,
+    thumbnail_url: video.thumbnail_url,
+    channel_title: video.channel_title,
+    published_at: video.published_at
+  } satisfies SearchVideoResult;
+}
+
+function normalizedTitle(value: string) {
+  return cleanText(value)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function rankVideoSearchResults(query: string, results: SearchVideoResult[]) {
+  const normalizedQuery = normalizedTitle(query);
+  if (!normalizedQuery) {
+    return results;
+  }
+
+  return results
+    .map((result, index) => {
+      const title = normalizedTitle(result.title);
+      const rank = title === normalizedQuery ? 0 : title.startsWith(normalizedQuery) ? 1 : title.includes(normalizedQuery) ? 2 : 3;
+      return { result, index, rank };
+    })
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(({ result }) => result);
 }
 
 async function supabaseFetch<T>(env: Env, path: string, init: RequestInit = {}) {
@@ -655,6 +756,17 @@ async function searchYouTube(env: Env, q: string, type: "video" | "channel") {
     }
   }
 
+  if (type === "video") {
+    const youtubeVideoId = videoIdFromInput(q);
+    if (youtubeVideoId) {
+      const video = await fetchVideoDetailsById(env, youtubeVideoId, DEFAULT_SETTINGS.shortsThresholdSeconds);
+      if (!video || isShortFormVideo(video, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
+        return [] satisfies SearchResult[];
+      }
+      return [searchVideoResultFromRow(video)] satisfies SearchResult[];
+    }
+  }
+
   type SearchResponse = {
     items: Array<{
       id: { videoId?: string; channelId?: string };
@@ -671,7 +783,7 @@ async function searchYouTube(env: Env, q: string, type: "video" | "channel") {
 
   const response = await youtubeFetch<SearchResponse>(env, "search", {
     part: "snippet",
-    maxResults: "10",
+    maxResults: String(type === "video" ? VIDEO_SEARCH_RESULTS : DEFAULT_SEARCH_RESULTS),
     q,
     type,
     safeSearch: "strict"
@@ -724,9 +836,9 @@ async function searchYouTube(env: Env, q: string, type: "video" | "channel") {
   const details = await fetchVideoDetails(env, videoIds, DEFAULT_SETTINGS.shortsThresholdSeconds);
   const detailById = new Map(details.map((video) => [video.youtube_video_id, video]));
 
-  return results.flatMap<SearchResult>((result) => {
+  const videoResults = results.flatMap<SearchVideoResult>((result) => {
     if (result.type !== "video") {
-      return [result];
+      return [];
     }
 
     const detail = detailById.get(result.youtube_video_id);
@@ -737,12 +849,16 @@ async function searchYouTube(env: Env, q: string, type: "video" | "channel") {
     return [
       {
         ...result,
+        title: detail?.title ?? result.title,
         description: detail?.description ?? result.description,
         thumbnail_url: detail?.thumbnail_url ?? result.thumbnail_url,
+        channel_title: detail?.channel_title ?? result.channel_title,
         published_at: detail?.published_at ?? result.published_at
       }
     ];
   });
+
+  return rankVideoSearchResults(q, videoResults) satisfies SearchResult[];
 }
 
 async function fetchChannelMetadata(env: Env, channelInput: string): Promise<ChannelRow>;
@@ -784,6 +900,7 @@ async function fetchVideoDetails(env: Env, youtubeVideoIds: string[], shortsThre
       id: string;
       snippet: {
         channelId: string;
+        channelTitle?: string;
         title: string;
         description?: string;
         publishedAt?: string;
@@ -815,6 +932,7 @@ async function fetchVideoDetails(env: Env, youtubeVideoIds: string[], shortsThre
         thumbnails?.medium?.url ??
         thumbnails?.default?.url ??
         null,
+      channel_title: cleanText(item.snippet.channelTitle),
       duration_seconds: durationSeconds,
       published_at: item.snippet.publishedAt ?? null,
       is_short: false

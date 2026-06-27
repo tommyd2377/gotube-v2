@@ -998,14 +998,14 @@ function DesktopApp() {
             <div className="sectionHeader">
               <div>
                 <h2>Search</h2>
-                <p>Search only runs when you submit. For exact channel adds, paste a YouTube channel URL or @handle.</p>
+                <p>Search only runs when you submit. For exact matches, paste a video URL or full title, or a channel URL or @handle.</p>
               </div>
             </div>
             <form className="searchForm" onSubmit={onSearch}>
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder={searchType === "channel" ? "Channel name, @handle, or URL" : "Search intentionally"}
+                placeholder={searchType === "channel" ? "Channel name, @handle, or URL" : "Video title or URL"}
               />
               <div className="segmentedControl" aria-label="Search type">
                 <button type="button" className={searchType === "video" ? "active" : ""} onClick={() => setSearchType("video")}>
@@ -1690,7 +1690,7 @@ function TvApp() {
                 value={query}
                 onFocus={() => setTvKeyboardTarget("search")}
                 onClick={() => setTvKeyboardTarget("search")}
-                placeholder="Search videos"
+                placeholder="Video title or URL"
                 readOnly
                 data-tv-focusable="true"
               />
