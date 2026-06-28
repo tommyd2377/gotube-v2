@@ -93,10 +93,11 @@ function loadYouTubeApi() {
   return apiPromise;
 }
 
-function directEmbedUrl(videoId: string, startSeconds: number) {
+function directEmbedUrl(videoId: string, startSeconds: number, widgetId: string) {
   const url = new URL(`https://www.youtube.com/embed/${encodeURIComponent(videoId)}`);
   url.searchParams.set("enablejsapi", "1");
   url.searchParams.set("origin", window.location.origin);
+  url.searchParams.set("widgetid", widgetId);
   url.searchParams.set("rel", "0");
   url.searchParams.set("modestbranding", "1");
   url.searchParams.set("playsinline", "1");
@@ -179,7 +180,8 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   const resumeSeconds = video.completed ? 0 : Math.floor(video.progress_seconds ?? 0);
   const progressPercent = durationSeconds > 0 ? Math.min(100, Math.max(0, (currentSeconds / durationSeconds) * 100)) : 0;
   const useDirectTvEmbed = tvMode;
-  const tvEmbedSrc = useDirectTvEmbed ? directEmbedUrl(video.youtube_video_id, resumeSeconds) : null;
+  const directPlayerWidgetId = `gotube-tv-player-${video.youtube_video_id}`;
+  const tvEmbedSrc = useDirectTvEmbed ? directEmbedUrl(video.youtube_video_id, resumeSeconds, directPlayerWidgetId) : null;
 
   function directCurrentSeconds() {
     const state = directPlaybackRef.current;
@@ -189,8 +191,27 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     return state.offsetSeconds + Math.max(0, (Date.now() - state.startedAtMs) / 1000);
   }
 
+  function sendDirectPlayerMessage(message: Record<string, unknown>) {
+    directIframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({
+        id: directPlayerWidgetId,
+        channel: "widget",
+        ...message
+      }),
+      "https://www.youtube.com"
+    );
+  }
+
   function sendDirectPlayerCommand(func: string, args: Array<string | number | boolean> = []) {
-    directIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args }), "https://www.youtube.com");
+    sendDirectPlayerMessage({ event: "command", func, args });
+  }
+
+  function listenToDirectPlayer() {
+    if (!useDirectTvEmbed) {
+      return;
+    }
+    sendDirectPlayerMessage({ event: "listening" });
+    sendDirectPlayerCommand("addEventListener", ["onStateChange"]);
   }
 
   function applyTvPlaybackQuality() {
@@ -204,6 +225,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     if (!useDirectTvEmbed) {
       return;
     }
+    listenToDirectPlayer();
     sendDirectPlayerCommand("getCurrentTime");
     sendDirectPlayerCommand("getDuration");
     sendDirectPlayerCommand("getPlayerState");
@@ -648,7 +670,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       return;
     }
 
-    sendDirectPlayerCommand("addEventListener", ["onStateChange"]);
+    listenToDirectPlayer();
     scheduleDirectPlayerSnapshot();
     const interval = window.setInterval(requestDirectPlayerSnapshot, TV_DIRECT_PLAYER_SYNC_MS);
     return () => window.clearInterval(interval);
@@ -884,7 +906,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
                 allowFullScreen
                 onLoad={() => {
                   setReady(true);
-                  sendDirectPlayerCommand("addEventListener", ["onStateChange"]);
+                  listenToDirectPlayer();
                   scheduleTvPlaybackQuality();
                   scheduleDirectPlayerSnapshot();
                 }}

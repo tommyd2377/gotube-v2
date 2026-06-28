@@ -592,7 +592,14 @@ async function listVideos(env: Env) {
 
 async function upsertVideos(env: Env, videos: VideoRow[]) {
   const rows = videos.map((video) => ({
-    ...video,
+    youtube_video_id: video.youtube_video_id,
+    youtube_channel_id: video.youtube_channel_id,
+    title: video.title,
+    description: video.description,
+    thumbnail_url: video.thumbnail_url,
+    duration_seconds: video.duration_seconds,
+    published_at: video.published_at,
+    is_short: video.is_short,
     fetched_at: nowIso()
   }));
 
