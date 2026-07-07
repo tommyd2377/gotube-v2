@@ -1,4 +1,4 @@
-import { ArrowLeft, FastForward, LogIn, Maximize2, Minimize2, Pause, Play, Rewind } from "lucide-react";
+import { ArrowLeft, CaptionsOff, FastForward, LogIn, Maximize2, Minimize2, Pause, Play, Rewind } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatDate, formatDuration } from "../lib/format";
 import { focusFirstTvElement, focusNearestTvElement, focusTvElement, type TvDirectionKey } from "../lib/tvFocus";
@@ -29,6 +29,7 @@ declare global {
     onYouTubeIframeAPIReady?: () => void;
     GoTubeNative?: {
       setKeepScreenOn: (enabled: boolean) => void;
+      toggleCaptions?: () => void;
     };
   }
 }
@@ -40,6 +41,7 @@ interface YouTubePlayer {
   getCurrentTime: () => number;
   getDuration: () => number;
   getPlayerState: () => number;
+  unloadModule?: (module: string) => void;
   destroy: () => void;
 }
 
@@ -52,6 +54,7 @@ const TV_PROGRESS_POLL_PLAYING_MS = 2500;
 const TV_PROGRESS_POLL_IDLE_MS = 5000;
 const TV_PROGRESS_SAVE_MS = 30000;
 const TV_DIRECT_PLAYER_SYNC_MS = 1000;
+const TV_CAPTIONS_OFF_RETRY_MS = [0, 400, 1200, 2600];
 const TV_DIRECT_PLAYER_STATE = {
   UNSTARTED: -1,
   ENDED: 0,
@@ -103,6 +106,7 @@ function directEmbedUrl(videoId: string, startSeconds: number, widgetId: string)
   url.searchParams.set("playsinline", "1");
   url.searchParams.set("controls", "1");
   url.searchParams.set("autoplay", "0");
+  url.searchParams.set("cc_load_policy", "0");
   url.searchParams.set("vq", TV_PREFERRED_PLAYBACK_QUALITY);
   if (startSeconds > 0) {
     url.searchParams.set("start", String(Math.floor(startSeconds)));
@@ -219,6 +223,45 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       return;
     }
     sendDirectPlayerCommand("setPlaybackQuality", [TV_PREFERRED_PLAYBACK_QUALITY]);
+  }
+
+  function sendCaptionsOffCommand() {
+    if (useDirectTvEmbed) {
+      sendDirectPlayerCommand("unloadModule", ["captions"]);
+      sendDirectPlayerCommand("unloadModule", ["cc"]);
+      return;
+    }
+
+    const player = playerRef.current;
+    player?.unloadModule?.("captions");
+    player?.unloadModule?.("cc");
+  }
+
+  function turnCaptionsOff() {
+    if (useDirectTvEmbed && window.GoTubeNative?.toggleCaptions) {
+      try {
+        window.GoTubeNative.toggleCaptions();
+      } catch {
+        sendCaptionsOffCommand();
+      }
+      return;
+    }
+
+    sendCaptionsOffCommand();
+  }
+
+  function scheduleTvCaptionsOff() {
+    if (!useDirectTvEmbed) {
+      return;
+    }
+
+    TV_CAPTIONS_OFF_RETRY_MS.forEach((delay) => {
+      if (delay === 0) {
+        sendCaptionsOffCommand();
+        return;
+      }
+      window.setTimeout(sendCaptionsOffCommand, delay);
+    });
   }
 
   function requestDirectPlayerSnapshot() {
@@ -613,6 +656,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       if (message.event === "onReady") {
         setReady(true);
         scheduleTvPlaybackQuality();
+        scheduleTvCaptionsOff();
         scheduleDirectPlayerSnapshot();
         return;
       }
@@ -638,6 +682,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
     function onNativePlayerTap() {
       applyTvPlaybackQuality();
+      scheduleTvCaptionsOff();
       scheduleDirectPlayerSnapshot();
     }
 
@@ -671,6 +716,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     }
 
     listenToDirectPlayer();
+    scheduleTvCaptionsOff();
     scheduleDirectPlayerSnapshot();
     const interval = window.setInterval(requestDirectPlayerSnapshot, TV_DIRECT_PLAYER_SYNC_MS);
     return () => window.clearInterval(interval);
@@ -908,6 +954,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
                   setReady(true);
                   listenToDirectPlayer();
                   scheduleTvPlaybackQuality();
+                  scheduleTvCaptionsOff();
                   scheduleDirectPlayerSnapshot();
                 }}
               />
@@ -965,6 +1012,17 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
               >
                 <FastForward aria-hidden="true" />
                 30s
+              </button>
+              <button
+                className="secondaryButton"
+                type="button"
+                onClick={turnCaptionsOff}
+                data-tv-focusable="true"
+                data-tv-player-control="true"
+                disabled={!ready}
+              >
+                <CaptionsOff aria-hidden="true" />
+                CC Off
               </button>
               <button
                 className="secondaryButton"
