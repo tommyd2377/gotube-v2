@@ -606,6 +606,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
         videoId: video.youtube_video_id,
         host: "https://www.youtube.com",
         playerVars: {
+          start: resumeSeconds,
           rel: 0,
           modestbranding: 1,
           playsinline: 1,
@@ -624,6 +625,8 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
             updateProgressState();
             if (event.data === window.YT?.PlayerState.ENDED) {
               saveCurrentProgress(true);
+            } else if (event.data === window.YT?.PlayerState.PAUSED) {
+              saveCurrentProgress(false);
             }
           }
         }
@@ -633,6 +636,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     return () => {
       disposed = true;
       setReady(false);
+      saveCurrentProgress(false);
       playerRef.current?.destroy();
       playerRef.current = null;
     };
@@ -727,9 +731,25 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       return;
     }
 
+    function onNativePause() {
+      saveCurrentProgress(false);
+    }
+
+    function onPageHidden() {
+      if (document.visibilityState === "hidden") {
+        saveCurrentProgress(false);
+      }
+    }
+
     const interval = window.setInterval(() => saveCurrentProgress(false), tvMode ? TV_PROGRESS_SAVE_MS : 15000);
+    if (!tvMode) {
+      document.addEventListener("visibilitychange", onPageHidden);
+      window.addEventListener("pagehide", onNativePause);
+    }
     return () => {
       window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onPageHidden);
+      window.removeEventListener("pagehide", onNativePause);
       saveCurrentProgress(false);
     };
   }, [onProgress, tvMode, video]);
