@@ -1,7 +1,7 @@
 import { ArrowLeft, CaptionsOff, FastForward, LogIn, Maximize2, Minimize2, Pause, Play, Rewind } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatDate, formatDuration } from "../lib/format";
-import { focusFirstTvElement, focusNearestTvElement, focusTvElement, type TvDirectionKey } from "../lib/tvFocus";
+import { focusNearestTvElement, focusTvElement, type TvDirectionKey } from "../lib/tvFocus";
 import type { Video } from "../lib/types";
 import { LinkifiedText } from "./LinkifiedText";
 
@@ -17,6 +17,8 @@ declare global {
           events?: {
             onReady?: (event: { target: YouTubePlayer }) => void;
             onStateChange?: (event: { data: number; target: YouTubePlayer }) => void;
+            onApiChange?: () => void;
+            onAutoplayBlocked?: () => void;
           };
         }
       ) => YouTubePlayer;
@@ -51,7 +53,6 @@ let apiPromise: Promise<void> | null = null;
 const TV_SEEK_SECONDS = 30;
 const TV_SEEK_ACCELERATION_SECONDS = [30, 60, 120, 300];
 const FULLSCREEN_CONTROLS_IDLE_MS = 7000;
-const TV_PREFERRED_PLAYBACK_QUALITY = "hd720";
 const TV_PROGRESS_POLL_PLAYING_MS = 2500;
 const TV_PROGRESS_POLL_IDLE_MS = 5000;
 const TV_PROGRESS_SAVE_MS = 30000;
@@ -77,6 +78,8 @@ type DirectPlayerMessage = {
     currentTime?: number;
     duration?: number;
     playerState?: number;
+    muted?: boolean;
+    volume?: number;
   };
 };
 
@@ -107,9 +110,8 @@ function directEmbedUrl(videoId: string, startSeconds: number, widgetId: string)
   url.searchParams.set("modestbranding", "1");
   url.searchParams.set("playsinline", "1");
   url.searchParams.set("controls", "1");
-  url.searchParams.set("autoplay", "0");
+  url.searchParams.set("autoplay", "1");
   url.searchParams.set("cc_load_policy", "0");
-  url.searchParams.set("vq", TV_PREFERRED_PLAYBACK_QUALITY);
   if (startSeconds > 0) {
     url.searchParams.set("start", String(Math.floor(startSeconds)));
   }
@@ -178,7 +180,7 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   const [ready, setReady] = useState(false);
   const [currentSeconds, setCurrentSeconds] = useState(video.completed ? 0 : Math.floor(video.progress_seconds ?? 0));
   const [durationSeconds, setDurationSeconds] = useState(video.duration_seconds ?? 0);
-  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(tvMode);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [seekFeedback, setSeekFeedback] = useState<SeekFeedback | null>(null);
   const channelLabel = video.channel_title ?? "Saved channel";
@@ -188,6 +190,14 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   const useDirectTvEmbed = tvMode;
   const directPlayerWidgetId = `gotube-tv-player-${video.youtube_video_id}`;
   const tvEmbedSrc = useDirectTvEmbed ? directEmbedUrl(video.youtube_video_id, resumeSeconds, directPlayerWidgetId) : null;
+  const lastPlayerStateRef = useRef<number | undefined>(undefined);
+  const lastAudioStateRef = useRef("");
+  const directPlayerConnectedRef = useRef(false);
+  const directPlayerSubscribedRef = useRef(false);
+
+  function logPlayerEvent(event: string, state?: number) {
+    console.info(`[GoTubePlayer] ${JSON.stringify({ event, state, tvMode, elapsedMs: Math.round(performance.now()) })}`);
+  }
 
   function directCurrentSeconds() {
     const state = directPlaybackRef.current;
@@ -217,17 +227,16 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       return;
     }
     sendDirectPlayerMessage({ event: "listening" });
-    sendDirectPlayerCommand("addEventListener", ["onStateChange"]);
-  }
-
-  function applyTvPlaybackQuality() {
-    if (!useDirectTvEmbed) {
-      return;
+    if (!directPlayerSubscribedRef.current) {
+      directPlayerSubscribedRef.current = true;
+      sendDirectPlayerCommand("addEventListener", ["onStateChange"]);
+      sendDirectPlayerCommand("addEventListener", ["onApiChange"]);
+      sendDirectPlayerCommand("addEventListener", ["onAutoplayBlocked"]);
     }
-    sendDirectPlayerCommand("setPlaybackQuality", [TV_PREFERRED_PLAYBACK_QUALITY]);
   }
 
   function sendCaptionsOffCommand() {
+    logPlayerEvent("captions-off-request");
     if (useDirectTvEmbed) {
       sendDirectPlayerCommand("unloadModule", ["captions"]);
       sendDirectPlayerCommand("unloadModule", ["cc"]);
@@ -267,28 +276,18 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   }
 
   function requestDirectPlayerSnapshot() {
-    if (!useDirectTvEmbed) {
+    // YouTube streams infoDelivery snapshots after the handshake. Re-subscribing
+    // every second is unnecessary; retry only until the frame responds.
+    if (!useDirectTvEmbed || directPlayerConnectedRef.current) {
       return;
     }
     listenToDirectPlayer();
-    sendDirectPlayerCommand("getCurrentTime");
-    sendDirectPlayerCommand("getDuration");
-    sendDirectPlayerCommand("getPlayerState");
   }
 
   function scheduleDirectPlayerSnapshot() {
     requestDirectPlayerSnapshot();
     window.setTimeout(requestDirectPlayerSnapshot, 250);
     window.setTimeout(requestDirectPlayerSnapshot, 900);
-  }
-
-  function scheduleTvPlaybackQuality() {
-    if (!useDirectTvEmbed) {
-      return;
-    }
-    applyTvPlaybackQuality();
-    window.setTimeout(applyTvPlaybackQuality, 600);
-    window.setTimeout(applyTvPlaybackQuality, 1800);
   }
 
   function setDirectProgress(seconds: number) {
@@ -348,6 +347,11 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   function applyDirectPlayerSnapshot(playerState?: number, currentTime?: number, duration?: number) {
     if (!useDirectTvEmbed) {
       return;
+    }
+
+    if (playerState !== undefined && playerState !== lastPlayerStateRef.current) {
+      lastPlayerStateRef.current = playerState;
+      logPlayerEvent("state", playerState);
     }
 
     const state = directPlaybackRef.current;
@@ -483,7 +487,6 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
       state.startedAtMs = Date.now();
       state.playing = true;
-      applyTvPlaybackQuality();
       sendDirectPlayerCommand("playVideo");
       setPlaying(true);
       scheduleDirectPlayerSnapshot();
@@ -625,12 +628,14 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
         },
         events: {
           onReady: (event) => {
+            logPlayerEvent("ready");
             playerRef.current = event.target;
             setReady(true);
             setCurrentSeconds(currentProgressSeconds());
             setDurationSeconds(currentDurationSeconds());
           },
           onStateChange: (event) => {
+            logPlayerEvent("state", event.data);
             setPlaying(event.data === window.YT?.PlayerState.PLAYING);
             updateProgressState();
             if (event.data === window.YT?.PlayerState.ENDED) {
@@ -638,7 +643,9 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
             } else if (event.data === window.YT?.PlayerState.PAUSED) {
               saveCurrentProgress(false);
             }
-          }
+          },
+          onApiChange: () => logPlayerEvent("api-change"),
+          onAutoplayBlocked: () => logPlayerEvent("autoplay-blocked")
         }
       });
     });
@@ -668,10 +675,16 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       }
 
       if (message.event === "onReady") {
+        directPlayerConnectedRef.current = true;
+        logPlayerEvent("ready");
         setReady(true);
-        scheduleTvPlaybackQuality();
         scheduleTvCaptionsOff();
         scheduleDirectPlayerSnapshot();
+        return;
+      }
+
+      if (message.event === "onApiChange" || message.event === "onAutoplayBlocked") {
+        logPlayerEvent(message.event === "onApiChange" ? "api-change" : "autoplay-blocked");
         return;
       }
 
@@ -681,6 +694,14 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       }
 
       if (message.info && typeof message.info === "object") {
+        directPlayerConnectedRef.current = true;
+        if (typeof message.info.muted === "boolean") {
+          const audioState = JSON.stringify({ muted: message.info.muted, volume: message.info.volume });
+          if (audioState !== lastAudioStateRef.current) {
+            lastAudioStateRef.current = audioState;
+            console.info(`[GoTubePlayer] audio ${audioState}`);
+          }
+        }
         applyDirectPlayerSnapshot(message.info.playerState, message.info.currentTime, message.info.duration);
       }
     }
@@ -695,7 +716,6 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     }
 
     function onNativePlayerTap() {
-      applyTvPlaybackQuality();
       scheduleTvCaptionsOff();
       scheduleDirectPlayerSnapshot();
     }
@@ -811,8 +831,8 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       return;
     }
     window.setTimeout(() => {
-      if (overlayRef.current) {
-        focusFirstTvElement(overlayRef.current);
+      if (frameRef.current) {
+        focusTvElement(frameRef.current);
       }
     }, 60);
   }, [tvMode, video.youtube_video_id]);
@@ -983,9 +1003,10 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
                 allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
                 allowFullScreen
                 onLoad={() => {
+                  directPlayerConnectedRef.current = false;
+                  directPlayerSubscribedRef.current = false;
                   setReady(true);
                   listenToDirectPlayer();
-                  scheduleTvPlaybackQuality();
                   scheduleTvCaptionsOff();
                   scheduleDirectPlayerSnapshot();
                 }}

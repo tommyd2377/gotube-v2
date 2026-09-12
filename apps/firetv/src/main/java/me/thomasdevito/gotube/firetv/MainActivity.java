@@ -8,12 +8,14 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
+import android.webkit.ConsoleMessage;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
@@ -89,7 +91,7 @@ public final class MainActivity extends Activity {
     settings.setJavaScriptEnabled(true);
     settings.setDomStorageEnabled(true);
     settings.setDatabaseEnabled(true);
-    settings.setMediaPlaybackRequiresUserGesture(true);
+    settings.setMediaPlaybackRequiresUserGesture(false);
     settings.setLoadWithOverviewMode(true);
     settings.setUseWideViewPort(true);
     settings.setJavaScriptCanOpenWindowsAutomatically(true);
@@ -399,6 +401,15 @@ public final class MainActivity extends Activity {
 
   private final class GoTubeWebChromeClient extends WebChromeClient {
     @Override
+    public boolean onConsoleMessage(ConsoleMessage message) {
+      if (message.message().startsWith("[GoTubePlayer] ")) {
+        Log.i("GoTubePlayer", message.message());
+        return true;
+      }
+      return super.onConsoleMessage(message);
+    }
+
+    @Override
     public void onPermissionRequest(PermissionRequest request) {
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
         super.onPermissionRequest(request);
@@ -466,6 +477,10 @@ public final class MainActivity extends Activity {
   }
 
   private final class GoTubeWebViewClient extends WebViewClient {
+    @Override
+    public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+      view.getSettings().setMediaPlaybackRequiresUserGesture(!isAppUrl(url));
+    }
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
       Uri uri = request.getUrl();
