@@ -99,6 +99,8 @@ Do not connect a personal YouTube account. GoTube does not use Google OAuth and 
 
 The schema enables RLS and does not create public browser write policies. The Worker is the gatekeeper and uses the service-role key server-side.
 
+For an existing GoTube deployment, rerun the full idempotent `supabase/schema.sql` before deploying a Worker update. This applies new columns and backfills first, so the updated Worker never writes against an older schema.
+
 ## Cloudflare Free Tier
 
 Worker local dev:
@@ -191,7 +193,7 @@ Install and launch on a Fire TV with ADB debugging enabled:
 ```bash
 adb connect <fire-tv-ip>:5555
 npm run install:firetv
-adb shell monkey -p me.thomasdevito.gotube.firetv -c android.intent.category.LAUNCHER 1
+adb shell monkey -p me.thomasdevito.gotube.firetv27 -c android.intent.category.LAUNCHER 1
 ```
 
 For all future Fire TV app updates, install over the existing app with `adb install -r` or `npm run install:firetv`. Do not uninstall the Fire TV app and do not clear app storage, because the private sync key is stored in the app WebView storage and would need to be entered again.

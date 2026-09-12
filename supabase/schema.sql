@@ -23,8 +23,33 @@ create table if not exists public.videos (
   duration_seconds integer,
   published_at timestamptz,
   is_short boolean default false,
+  channel_title text,
+  channel_thumbnail_url text,
   fetched_at timestamptz default now()
 );
+
+alter table public.videos
+  add column if not exists channel_title text;
+
+alter table public.videos
+  add column if not exists channel_thumbnail_url text;
+
+update public.videos as video
+set
+  channel_title = coalesce(nullif(btrim(video.channel_title), ''), channel.title),
+  channel_thumbnail_url = coalesce(nullif(btrim(video.channel_thumbnail_url), ''), channel.thumbnail_url)
+from public.channels as channel
+where video.youtube_channel_id = channel.youtube_channel_id
+  and (
+    (
+      nullif(btrim(video.channel_title), '') is null
+      and nullif(btrim(channel.title), '') is not null
+    )
+    or (
+      nullif(btrim(video.channel_thumbnail_url), '') is null
+      and nullif(btrim(channel.thumbnail_url), '') is not null
+    )
+  );
 
 create table if not exists public.watch_later (
   id uuid primary key default gen_random_uuid(),

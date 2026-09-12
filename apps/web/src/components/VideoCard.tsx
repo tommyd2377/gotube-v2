@@ -28,7 +28,7 @@ export function VideoCard({
   onMarkWatched,
   onRemove
 }: VideoCardProps) {
-  const channelLabel = video.channel_title ?? "Saved channel";
+  const channelLabel = video.channel_title?.trim() || "Channel details unavailable";
   const progressSeconds = watched?.progress_seconds ?? video.progress_seconds ?? 0;
   const completed = watched?.completed ?? video.completed ?? false;
   const progressPercent =
@@ -76,7 +76,7 @@ export function VideoCard({
       <div className="videoBody">
         <h3>{video.title}</h3>
         <p className="metaLine">
-          {onChannelOpen ? (
+          {onChannelOpen && video.youtube_channel_id ? (
             <button
               className="channelNameButton"
               type="button"

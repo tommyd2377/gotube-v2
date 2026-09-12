@@ -31,7 +31,7 @@ interface VideoRow {
   published_at?: string | null;
   is_short?: boolean;
   fetched_at?: string;
-  channel_title?: string;
+  channel_title?: string | null;
   channel_thumbnail_url?: string | null;
   watched_at?: string | null;
   progress_seconds?: number | null;
@@ -72,6 +72,8 @@ interface SearchVideoResult {
   thumbnail_url?: string | null;
   channel_title?: string;
   published_at?: string | null;
+  duration_seconds?: number | null;
+  is_short?: boolean;
 }
 
 interface SearchChannelResult {
@@ -126,7 +128,9 @@ const MAX_CHANNEL_PAGE_LIMIT = 50;
 const CHANNEL_PAGE_LOOKAHEAD_PAGES = 5;
 const DEFAULT_SEARCH_RESULTS = 10;
 const VIDEO_SEARCH_RESULTS = 25;
+const VIDEO_ID_LOOKUP_BATCH_SIZE = 100;
 const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+const SUPABASE_FUTURE_JWT_RETRY_MS = 2_000;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -139,6 +143,7 @@ function json(data: unknown, init: ResponseInit = {}) {
     ...init,
     headers: {
       "content-type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
       ...corsHeaders,
       ...init.headers
     }
@@ -147,6 +152,16 @@ function json(data: unknown, init: ResponseInit = {}) {
 
 function error(status: number, message: string) {
   return json({ error: message }, { status });
+}
+
+class PublicHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = "PublicHttpError";
+  }
 }
 
 function expectedSyncKey(env: Env) {
@@ -299,8 +314,8 @@ function withChannelInfo(video: VideoRow, channels: ChannelRow[], watched: Watch
   const watchedState = watched.find((item) => item.youtube_video_id === video.youtube_video_id);
   return {
     ...video,
-    channel_title: channel?.title,
-    channel_thumbnail_url: channel?.thumbnail_url ?? null,
+    channel_title: channel?.title ?? video.channel_title ?? undefined,
+    channel_thumbnail_url: channel?.thumbnail_url ?? video.channel_thumbnail_url ?? null,
     watched_at: watchedState?.watched_at ?? null,
     progress_seconds: watchedState?.progress_seconds ?? null,
     completed: watchedState?.completed ?? null
@@ -450,8 +465,10 @@ function searchVideoResultFromRow(video: VideoRow) {
     title: video.title,
     description: video.description,
     thumbnail_url: video.thumbnail_url,
-    channel_title: video.channel_title,
-    published_at: video.published_at
+    channel_title: video.channel_title ?? undefined,
+    published_at: video.published_at,
+    duration_seconds: video.duration_seconds,
+    is_short: video.is_short
   } satisfies SearchVideoResult;
 }
 
@@ -482,24 +499,61 @@ function rankVideoSearchResults(query: string, results: SearchVideoResult[]) {
     .map(({ result }) => result);
 }
 
+function isFutureIssuedSupabaseJwt(status: number, body: string) {
+  if (status !== 401) {
+    return false;
+  }
+
+  try {
+    const payload = JSON.parse(body) as { code?: unknown; message?: unknown };
+    return payload.code === "PGRST303" && payload.message === "JWT issued at future";
+  } catch {
+    return false;
+  }
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
 async function supabaseFetch<T>(env: Env, path: string, init: RequestInit = {}) {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("Supabase is not configured.");
   }
 
-  const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${path}`, {
-    ...init,
-    headers: {
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-      "content-type": "application/json",
-      ...init.headers
-    }
-  });
+  const key = env.SUPABASE_SERVICE_ROLE_KEY;
+  const headers = new Headers(init.headers);
+  headers.set("apikey", key);
+  headers.set("content-type", "application/json");
+  if (key.startsWith("sb_secret_")) {
+    headers.delete("authorization");
+  } else {
+    headers.set("authorization", `Bearer ${key}`);
+  }
+
+  const request = () =>
+    fetch(`${env.SUPABASE_URL!.replace(/\/$/, "")}/rest/v1/${path}`, {
+      ...init,
+      headers
+    });
+
+  let response = await request();
+  let failureBody = response.ok ? "" : await response.text();
+
+  if (isFutureIssuedSupabaseJwt(response.status, failureBody)) {
+    await wait(SUPABASE_FUTURE_JWT_RETRY_MS);
+    response = await request();
+    failureBody = response.ok ? "" : await response.text();
+  }
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Supabase request failed (${response.status}): ${body}`);
+    if (isFutureIssuedSupabaseJwt(response.status, failureBody)) {
+      throw new PublicHttpError(
+        503,
+        "Saved data is temporarily unavailable. Your cached videos are still available; please try again shortly."
+      );
+    }
+    throw new Error(`Supabase request failed (${response.status}): ${failureBody}`);
   }
 
   if (response.status === 204) {
@@ -590,6 +644,40 @@ async function listVideos(env: Env) {
   );
 }
 
+async function listVideosByIds(env: Env, youtubeVideoIds: string[]) {
+  const ids = Array.from(
+    new Set(
+      youtubeVideoIds
+        .map((youtubeVideoId) => validYouTubeVideoId(youtubeVideoId))
+        .filter((youtubeVideoId): youtubeVideoId is string => Boolean(youtubeVideoId))
+    )
+  );
+  const batches: string[][] = [];
+  for (let index = 0; index < ids.length; index += VIDEO_ID_LOOKUP_BATCH_SIZE) {
+    batches.push(ids.slice(index, index + VIDEO_ID_LOOKUP_BATCH_SIZE));
+  }
+
+  const videos: VideoRow[] = [];
+  for (const batch of batches) {
+    videos.push(
+      ...(await supabaseFetch<VideoRow[]>(
+        env,
+        `videos?${restParams({
+          select: "*",
+          youtube_video_id: `in.(${batch.join(",")})`,
+          limit: String(batch.length)
+        })}`
+      ))
+    );
+  }
+  return videos;
+}
+
+async function getVideo(env: Env, youtubeVideoId: string) {
+  const videos = await listVideosByIds(env, [youtubeVideoId]);
+  return videos[0] ?? null;
+}
+
 async function upsertVideos(env: Env, videos: VideoRow[]) {
   const rows = videos.map((video) => ({
     youtube_video_id: video.youtube_video_id,
@@ -600,6 +688,8 @@ async function upsertVideos(env: Env, videos: VideoRow[]) {
     duration_seconds: video.duration_seconds,
     published_at: video.published_at,
     is_short: video.is_short,
+    channel_title: video.channel_title,
+    channel_thumbnail_url: video.channel_thumbnail_url,
     fetched_at: nowIso()
   }));
 
@@ -624,24 +714,56 @@ async function listWatchLater(env: Env) {
 }
 
 async function addWatchLater(env: Env, youtubeVideoId: string) {
+  const validVideoId = validYouTubeVideoId(youtubeVideoId);
+  if (!validVideoId) {
+    throw new Error("A valid YouTube video ID is required.");
+  }
+
   const row: WatchLaterRow = {
-    youtube_video_id: youtubeVideoId,
+    youtube_video_id: validVideoId,
     added_at: nowIso()
   };
 
-  const existingVideos = await listVideos(env);
-  const existingVideo = existingVideos.find((video) => video.youtube_video_id === youtubeVideoId);
-  if (existingVideo && isShortFormVideo(existingVideo, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
+  let video = await getVideo(env, validVideoId);
+  if (video && isShortFormVideo(video, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
     throw new Error("Shorts are not available in GoTube.");
   }
-  if (!existingVideo) {
-    const video = await fetchVideoDetailsById(env, youtubeVideoId, DEFAULT_SETTINGS.shortsThresholdSeconds);
-    if (video) {
-      if (isShortFormVideo(video, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
+
+  if (video && !video.channel_title?.trim()) {
+    let refreshedVideo: VideoRow | null = null;
+    try {
+      refreshedVideo = await fetchVideoDetailsById(env, validVideoId, DEFAULT_SETTINGS.shortsThresholdSeconds);
+    } catch {
+      // Existing metadata is still usable; channel enrichment can be retried on a later add.
+    }
+
+    if (refreshedVideo) {
+      if (isShortFormVideo(refreshedVideo, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
         throw new Error("Shorts are not available in GoTube.");
       }
-      await upsertVideos(env, [video]);
+      try {
+        const storedVideos = await upsertVideos(env, [refreshedVideo]);
+        video = storedVideos[0] ?? video;
+      } catch {
+        // Do not block an existing valid video if optional channel enrichment cannot be stored.
+      }
     }
+  }
+
+  if (!video) {
+    const fetchedVideo = await fetchVideoDetailsById(env, validVideoId, DEFAULT_SETTINGS.shortsThresholdSeconds);
+    if (!fetchedVideo) {
+      throw new Error("Video metadata is unavailable; the video was not added to Watch Later.");
+    }
+    if (isShortFormVideo(fetchedVideo, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
+      throw new Error("Shorts are not available in GoTube.");
+    }
+    const storedVideos = await upsertVideos(env, [fetchedVideo]);
+    video = storedVideos[0] ?? null;
+  }
+
+  if (!video) {
+    throw new Error("Video metadata could not be stored; the video was not added to Watch Later.");
   }
 
   const rows = await supabaseFetch<WatchLaterRow[]>(
@@ -860,7 +982,9 @@ async function searchYouTube(env: Env, q: string, type: "video" | "channel") {
         description: detail?.description ?? result.description,
         thumbnail_url: detail?.thumbnail_url ?? result.thumbnail_url,
         channel_title: detail?.channel_title ?? result.channel_title,
-        published_at: detail?.published_at ?? result.published_at
+        published_at: detail?.published_at ?? result.published_at,
+        duration_seconds: detail?.duration_seconds ?? result.duration_seconds,
+        is_short: detail?.is_short ?? result.is_short
       }
     ];
   });
@@ -1098,11 +1222,16 @@ async function getFeed(env: Env, url: URL) {
 }
 
 async function getWatchLater(env: Env) {
-  const [channels, videos, watchLater, watched] = await Promise.all([listChannels(env, true), listVideos(env), listWatchLater(env), listWatched(env)]);
+  const [channels, watchLater, watched] = await Promise.all([listChannels(env, true), listWatchLater(env), listWatched(env)]);
+  const videos = await listVideosByIds(
+    env,
+    watchLater.map((item) => item.youtube_video_id)
+  );
+  const videosById = new Map(videos.map((video) => [video.youtube_video_id, video]));
   const items: Array<WatchLaterRow & { video: VideoRow }> = [];
 
   for (const item of watchLater) {
-    const video = videos.find((candidate) => candidate.youtube_video_id === item.youtube_video_id);
+    const video = videosById.get(item.youtube_video_id);
     if (video) {
       if (isShortFormVideo(video, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
         continue;
@@ -1119,12 +1248,14 @@ async function getWatchLater(env: Env) {
       video: {
         youtube_video_id: item.youtube_video_id,
         youtube_channel_id: "",
-        title: "Saved video",
-        description: null,
+        title: "Metadata unavailable",
+        description: "GoTube could not load metadata for this saved video.",
         thumbnail_url: null,
         duration_seconds: null,
         published_at: null,
-        is_short: false
+        is_short: false,
+        channel_title: "Channel details unavailable",
+        channel_thumbnail_url: null
       }
     });
   }
@@ -1207,10 +1338,11 @@ async function handleRequest(request: Request, env: Env) {
 
   if (resource === "watch-later" && request.method === "POST" && !id) {
     const body = await parseJsonBody<{ youtubeVideoId?: string }>(request);
-    if (!body.youtubeVideoId) {
-      return error(400, "youtubeVideoId is required.");
+    const youtubeVideoId = validYouTubeVideoId(body.youtubeVideoId);
+    if (!youtubeVideoId) {
+      return error(400, "A valid youtubeVideoId is required.");
     }
-    return json({ item: await addWatchLater(env, body.youtubeVideoId) });
+    return json({ item: await addWatchLater(env, youtubeVideoId) });
   }
 
   if (resource === "watch-later" && request.method === "DELETE" && id) {
@@ -1260,6 +1392,9 @@ export default {
     try {
       return await handleRequest(request, env);
     } catch (cause) {
+      if (cause instanceof PublicHttpError) {
+        return error(cause.status, cause.message);
+      }
       const message = cause instanceof Error ? cause.message : "Unexpected server error.";
       return error(500, message);
     }

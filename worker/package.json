@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "wrangler dev src/index.ts --local --host 127.0.0.1 --port 8787",
     "build": "wrangler deploy src/index.ts --dry-run --outdir dist",
-    "typecheck": "tsc --noEmit --pretty false"
+    "typecheck": "tsc --noEmit --pretty false",
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241218.0",

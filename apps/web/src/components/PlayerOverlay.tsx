@@ -30,6 +30,8 @@ declare global {
     GoTubeNative?: {
       setKeepScreenOn: (enabled: boolean) => void;
       toggleCaptions?: () => void;
+      openYouTubeSignIn?: () => void;
+      exitApp?: () => void;
     };
   }
 }
@@ -571,6 +573,14 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
   }, [clearControlsHideTimeout, fullscreen, tvMode]);
 
   function openYouTubeSignIn() {
+    try {
+      if (window.GoTubeNative?.openYouTubeSignIn) {
+        window.GoTubeNative.openYouTubeSignIn();
+        return;
+      }
+    } catch {
+      // Fall back to top-level navigation outside the Fire TV shell.
+    }
     const signInUrl = new URL("https://accounts.google.com/ServiceLogin");
     signInUrl.searchParams.set("service", "youtube");
     signInUrl.searchParams.set("continue", "https://www.youtube.com/");
@@ -742,12 +752,14 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     }
 
     const interval = window.setInterval(() => saveCurrentProgress(false), tvMode ? TV_PROGRESS_SAVE_MS : 15000);
+    window.addEventListener("gotube:native-pause", onNativePause);
     if (!tvMode) {
       document.addEventListener("visibilitychange", onPageHidden);
       window.addEventListener("pagehide", onNativePause);
     }
     return () => {
       window.clearInterval(interval);
+      window.removeEventListener("gotube:native-pause", onNativePause);
       document.removeEventListener("visibilitychange", onPageHidden);
       window.removeEventListener("pagehide", onNativePause);
       saveCurrentProgress(false);

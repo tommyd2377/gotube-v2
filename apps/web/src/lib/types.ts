@@ -22,7 +22,7 @@ export interface Video {
   published_at?: string | null;
   is_short?: boolean;
   fetched_at?: string;
-  channel_title?: string;
+  channel_title?: string | null;
   channel_thumbnail_url?: string | null;
   watched_at?: string | null;
   progress_seconds?: number | null;
@@ -71,8 +71,10 @@ export interface SearchVideoResult {
   title: string;
   description?: string | null;
   thumbnail_url?: string | null;
-  channel_title?: string;
+  channel_title?: string | null;
   published_at?: string | null;
+  duration_seconds?: number | null;
+  is_short?: boolean;
 }
 
 export interface SearchChannelResult {

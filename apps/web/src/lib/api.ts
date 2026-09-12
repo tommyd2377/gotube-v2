@@ -42,6 +42,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, includeSyncKey 
 
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
+    cache: "no-store",
     headers
   });
 
@@ -114,6 +115,7 @@ export const api = {
   markWatched: (youtubeVideoId: string, progressSeconds = 0, completed = true) =>
     apiFetch<{ watched: { youtube_video_id: string; watched_at?: string; progress_seconds?: number; completed?: boolean } }>("/watched", {
       method: "POST",
+      keepalive: true,
       body: JSON.stringify({ youtubeVideoId, progressSeconds, completed })
     }),
   watched: () => apiFetch<{ items: Array<{ youtube_video_id: string; watched_at?: string; progress_seconds?: number; completed?: boolean }> }>("/watched"),

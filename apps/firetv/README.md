@@ -19,7 +19,7 @@ Install it on a Fire TV with ADB debugging enabled:
 ```bash
 adb connect <fire-tv-ip>:5555
 npm run install:firetv
-adb shell monkey -p me.thomasdevito.gotube.firetv -c android.intent.category.LAUNCHER 1
+adb shell monkey -p me.thomasdevito.gotube.firetv27 -c android.intent.category.LAUNCHER 1
 ```
 
 Optional: if you would rather wrap a deployed frontend instead of bundling static assets, build with:

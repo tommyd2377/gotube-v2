@@ -42,6 +42,7 @@ public final class MainActivity extends Activity {
   private String allowedTopLevelHost = LOCAL_HOST;
   private String appStartUrl = LOCAL_ORIGIN + "/tv?nativeShell=firetv";
   private boolean keepScreenOn;
+  private boolean activityResumed;
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
@@ -172,13 +173,40 @@ public final class MainActivity extends Activity {
   }
 
   @Override
+  protected void onResume() {
+    super.onResume();
+    activityResumed = true;
+    if (webView != null) {
+      webView.onResume();
+      webView.resumeTimers();
+      webView.postDelayed(new Runnable() {
+        @Override
+        public void run() {
+          if (activityResumed && webView != null && isAppUrl(webView.getUrl())) {
+            dispatchJsSnippet("window.dispatchEvent(new Event('gotube:native-resume'));");
+          }
+        }
+      }, 150);
+    }
+  }
+
+  @Override
   protected void onPause() {
+    activityResumed = false;
     setDisplayKeepScreenOn(false);
+    if (webView != null) {
+      if (isAppUrl(webView.getUrl())) {
+        dispatchJsSnippet("window.dispatchEvent(new Event('gotube:native-pause'));");
+      }
+      webView.onPause();
+      webView.pauseTimers();
+    }
     super.onPause();
   }
 
   @Override
   protected void onDestroy() {
+    activityResumed = false;
     setDisplayKeepScreenOn(false);
     if (webView != null) {
       webView.destroy();
@@ -401,6 +429,30 @@ public final class MainActivity extends Activity {
 
   private final class GoTubeNativeBridge {
     @JavascriptInterface
+    public void exitApp() {
+      runOnUiThread(new Runnable() {
+        @Override
+        public void run() {
+          if (webView != null && isAppUrl(webView.getUrl())) {
+            MainActivity.this.finish();
+          }
+        }
+      });
+    }
+
+    @JavascriptInterface
+    public void openYouTubeSignIn() {
+      runOnUiThread(new Runnable() {
+        @Override
+        public void run() {
+          if (webView != null && isAppUrl(webView.getUrl())) {
+            MainActivity.this.openYouTubeSignIn();
+          }
+        }
+      });
+    }
+
+    @JavascriptInterface
     public void setKeepScreenOn(final boolean enabled) {
       runOnUiThread(new Runnable() {
         @Override
@@ -466,6 +518,7 @@ public final class MainActivity extends Activity {
     String host = uri.getHost();
     return host != null
       && (host.equals("accounts.google.com")
+        || host.equals("accounts.youtube.com")
         || host.equals("myaccount.google.com")
         || host.equals("www.google.com")
         || host.equals("consent.youtube.com"));
@@ -479,6 +532,7 @@ public final class MainActivity extends Activity {
     }
 
     return host.equals("accounts.google.com")
+      || host.equals("accounts.youtube.com")
       || host.equals("myaccount.google.com")
       || host.equals("www.google.com")
       || host.equals("youtube.com")

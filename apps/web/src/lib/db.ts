@@ -57,45 +57,141 @@ export async function cacheSettings(settings: SettingsShape) {
 }
 
 export async function cacheChannels(channels: Channel[]) {
-  await db.channels.bulkPut(channels);
+  await db.transaction("rw", [db.channels], async () => {
+    await db.channels.clear();
+    if (channels.length) {
+      await db.channels.bulkPut(channels);
+    }
+  });
+}
+
+function preferNonEmptyText(preferred?: string | null, fallback?: string | null) {
+  return preferred?.trim() ? preferred : fallback ?? preferred;
+}
+
+function mergeVideoMetadata(preferred: Video, fallback: Video): Video {
+  const preferredHasIdentity = Boolean(preferred.youtube_channel_id && preferred.title.trim());
+
+  return {
+    ...fallback,
+    ...preferred,
+    youtube_channel_id: preferred.youtube_channel_id || fallback.youtube_channel_id,
+    title: preferredHasIdentity ? preferred.title : fallback.title,
+    description: preferredHasIdentity
+      ? preferNonEmptyText(preferred.description, fallback.description)
+      : preferNonEmptyText(fallback.description, preferred.description),
+    thumbnail_url: preferredHasIdentity
+      ? preferNonEmptyText(preferred.thumbnail_url, fallback.thumbnail_url)
+      : preferNonEmptyText(fallback.thumbnail_url, preferred.thumbnail_url),
+    duration_seconds: preferredHasIdentity
+      ? preferred.duration_seconds ?? fallback.duration_seconds
+      : fallback.duration_seconds ?? preferred.duration_seconds,
+    published_at: preferredHasIdentity ? preferred.published_at ?? fallback.published_at : fallback.published_at ?? preferred.published_at,
+    channel_title: preferredHasIdentity
+      ? preferNonEmptyText(preferred.channel_title, fallback.channel_title)
+      : preferNonEmptyText(fallback.channel_title, preferred.channel_title),
+    channel_thumbnail_url: preferredHasIdentity
+      ? preferNonEmptyText(preferred.channel_thumbnail_url, fallback.channel_thumbnail_url)
+      : preferNonEmptyText(fallback.channel_thumbnail_url, preferred.channel_thumbnail_url),
+    fetched_at: preferredHasIdentity ? preferred.fetched_at ?? fallback.fetched_at : fallback.fetched_at ?? preferred.fetched_at,
+    is_short: preferredHasIdentity ? preferred.is_short ?? fallback.is_short : fallback.is_short ?? preferred.is_short
+  };
 }
 
 export async function cacheVideos(videos: Video[]) {
-  await db.videos.bulkPut(videos.map(markShortFormVideo));
+  const markedVideos = videos.map(markShortFormVideo);
+  await db.transaction("rw", [db.videos], async () => {
+    const cachedVideos = await db.videos.bulkGet(markedVideos.map((video) => video.youtube_video_id));
+    await db.videos.bulkPut(
+      markedVideos.map((video, index) => {
+        const cachedVideo = cachedVideos[index];
+        return cachedVideo ? mergeVideoMetadata(video, cachedVideo) : video;
+      })
+    );
+  });
 }
 
 export async function cacheWatchLater(items: WatchLaterItem[]) {
-  await db.watchLater.clear();
-  await db.watchLater.bulkPut(visibleWatchLaterItems(items));
+  return db.transaction("rw", [db.videos, db.watchLater], async () => {
+    const videoIds = items.map((item) => item.youtube_video_id);
+    const [cachedVideos, cachedWatchLater] = await Promise.all([
+      db.videos.bulkGet(videoIds),
+      db.watchLater.bulkGet(videoIds)
+    ]);
+    const cachedById = new Map<string, Video>();
+    for (const video of cachedVideos) {
+      if (video) {
+        cachedById.set(video.youtube_video_id, video);
+      }
+    }
+    for (const item of cachedWatchLater) {
+      if (item) {
+        const cachedVideo = cachedById.get(item.youtube_video_id);
+        cachedById.set(item.youtube_video_id, cachedVideo ? mergeVideoMetadata(cachedVideo, item.video) : item.video);
+      }
+    }
+
+    const mergedItems = visibleWatchLaterItems(
+      items.map((item) => {
+        const cachedVideo = cachedById.get(item.youtube_video_id);
+        if (!cachedVideo) {
+          return item;
+        }
+
+        const remoteVideo = item.video;
+        return {
+          ...item,
+          video: mergeVideoMetadata(remoteVideo, cachedVideo)
+        };
+      })
+    );
+
+    if (mergedItems.length) {
+      await db.videos.bulkPut(mergedItems.map((item) => item.video));
+    }
+    await db.watchLater.clear();
+    if (mergedItems.length) {
+      await db.watchLater.bulkPut(mergedItems);
+    }
+    return mergedItems;
+  });
 }
 
 export async function cachedFeed(_settings: SettingsShape, limit?: number) {
-  const [videos, channels, watched] = await Promise.all([
-    db.videos.orderBy("published_at").reverse().toArray(),
-    db.channels.toArray(),
-    db.watchedVideos.toArray()
-  ]);
-  const channelIds = new Set(channels.filter((channel) => !channel.hidden).map((channel) => channel.youtube_channel_id));
-  const watchedById = new Map(watched.map((row) => [row.youtube_video_id, row]));
+  const channels = await db.channels.toArray();
+  const channelsById = new Map(
+    channels
+      .filter((channel) => !channel.hidden)
+      .map((channel) => [channel.youtube_channel_id, channel])
+  );
+  if (!channelsById.size) {
+    return [];
+  }
 
-  const filtered = videos
-    .filter((video) => channelIds.has(video.youtube_channel_id))
-    .map(markShortFormVideo)
-    .filter((video) => !video.is_short)
-    .map((video) => {
-      const channel = channels.find((item) => item.youtube_channel_id === video.youtube_channel_id);
-      const watchedState = watchedById.get(video.youtube_video_id);
-      return {
-        ...video,
-        channel_title: video.channel_title ?? channel?.title,
-        channel_thumbnail_url: video.channel_thumbnail_url ?? channel?.thumbnail_url ?? null,
-        watched_at: watchedState?.watched_at ?? null,
-        progress_seconds: watchedState?.progress_seconds ?? null,
-        completed: watchedState?.completed ?? null
-      };
-    });
+  let videosQuery = db.videos
+    .orderBy("published_at")
+    .reverse()
+    .filter((video) => channelsById.has(video.youtube_channel_id) && !markShortFormVideo(video).is_short);
+  if (typeof limit === "number") {
+    videosQuery = videosQuery.limit(limit);
+  }
 
-  return typeof limit === "number" ? filtered.slice(0, limit) : filtered;
+  const videos = await videosQuery.toArray();
+  const watched = await db.watchedVideos.bulkGet(videos.map((video) => video.youtube_video_id));
+
+  return videos.map((video, index) => {
+    const markedVideo = markShortFormVideo(video);
+    const channel = channelsById.get(markedVideo.youtube_channel_id);
+    const watchedState = watched[index];
+    return {
+      ...markedVideo,
+      channel_title: markedVideo.channel_title ?? channel?.title,
+      channel_thumbnail_url: markedVideo.channel_thumbnail_url ?? channel?.thumbnail_url ?? null,
+      watched_at: watchedState?.watched_at ?? null,
+      progress_seconds: watchedState?.progress_seconds ?? null,
+      completed: watchedState?.completed ?? null
+    };
+  });
 }
 
 export async function cacheWatched(youtubeVideoId: string, progressSeconds = 0, completed = true) {
@@ -104,6 +200,15 @@ export async function cacheWatched(youtubeVideoId: string, progressSeconds = 0, 
     watched_at: new Date().toISOString(),
     progress_seconds: progressSeconds,
     completed
+  });
+}
+
+export async function cacheWatchedSnapshot(items: WatchedVideo[]) {
+  await db.transaction("rw", [db.watchedVideos], async () => {
+    await db.watchedVideos.clear();
+    if (items.length) {
+      await db.watchedVideos.bulkPut(items);
+    }
   });
 }
 

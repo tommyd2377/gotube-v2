@@ -33,6 +33,7 @@ import {
   cacheVideos,
   cacheWatchLater,
   cacheWatched,
+  cacheWatchedSnapshot,
   cachedFeed,
   db,
   DEFAULT_SETTINGS,
@@ -60,6 +61,8 @@ const tabs: Array<{ id: TabId; label: string; icon: typeof Rss }> = [
 ];
 const FEED_PAGE_SIZE = 20;
 const CHANNEL_PAGE_SIZE = 10;
+const RESUME_SYNC_THROTTLE_MS = 3_000;
+const NATIVE_RESUME_EVENT = "gotube:native-resume";
 
 function describeError(cause: unknown) {
   if (cause instanceof ApiError && cause.status === 401) {
@@ -80,7 +83,8 @@ function videoFromSearch(result: SearchVideoResult): Video {
     thumbnail_url: result.thumbnail_url,
     published_at: result.published_at,
     channel_title: result.channel_title,
-    is_short: false
+    duration_seconds: result.duration_seconds,
+    is_short: result.is_short
   };
 }
 
@@ -127,12 +131,73 @@ function useGoTubeData() {
   const [notice, setNoticeState] = useState("");
   const [noticeToken, setNoticeToken] = useState(0);
   const [busy, setBusy] = useState(false);
-  const startupSyncStartedRef = useRef(false);
+  const [backendSyncing, setBackendSyncing] = useState(false);
+  const [feedRefreshing, setFeedRefreshing] = useState(false);
+  const startupReadyRef = useRef(false);
+  const backendSyncInFlightRef = useRef<Promise<boolean> | null>(null);
+  const backendSyncQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const lastBackendSyncAtRef = useRef(0);
+  const foregroundOperationCountRef = useRef(0);
+  const backendSyncUiCountRef = useRef(0);
+  const watchLaterOperationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const watchedOperationQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const setNotice = useCallback((message: string) => {
     setNoticeState(message);
     setNoticeToken((token) => token + 1);
   }, []);
+
+  const enqueueWatchLaterOperation = useCallback(<T,>(operation: () => Promise<T>) => {
+    const result = watchLaterOperationQueueRef.current.then(operation, operation);
+    watchLaterOperationQueueRef.current = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }, []);
+
+  const enqueueWatchedOperation = useCallback(<T,>(operation: () => Promise<T>) => {
+    const result = watchedOperationQueueRef.current.then(operation, operation);
+    watchedOperationQueueRef.current = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }, []);
+
+  const beginForegroundOperation = useCallback(() => {
+    let finished = false;
+    foregroundOperationCountRef.current += 1;
+    setBusy(true);
+    return () => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      foregroundOperationCountRef.current = Math.max(0, foregroundOperationCountRef.current - 1);
+      if (!foregroundOperationCountRef.current) {
+        setBusy(false);
+      }
+    };
+  }, []);
+
+  const beginBackendSyncUi = useCallback(() => {
+    let finished = false;
+    const finishForegroundOperation = beginForegroundOperation();
+    backendSyncUiCountRef.current += 1;
+    setBackendSyncing(true);
+    return () => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      backendSyncUiCountRef.current = Math.max(0, backendSyncUiCountRef.current - 1);
+      if (!backendSyncUiCountRef.current) {
+        setBackendSyncing(false);
+      }
+      finishForegroundOperation();
+    };
+  }, [beginForegroundOperation]);
 
   useEffect(() => {
     if (!notice) {
@@ -182,67 +247,78 @@ function useGoTubeData() {
   }, []);
 
   const refreshRemote = useCallback(
-    async (settingsOverride?: SettingsShape, silent = false, manageBusy = true) => {
-      if (manageBusy) {
-        setBusy(true);
+    (settingsOverride?: SettingsShape, silent = false, manageBusy = true, coalesce = false) => {
+      if (coalesce && backendSyncInFlightRef.current) {
+        return backendSyncInFlightRef.current;
       }
-      try {
-        const remoteSettings = await api.getSettings();
-        const nextSettings = { ...(settingsOverride ?? settings), ...remoteSettings.settings };
-        setSettingsState(nextSettings);
-        await cacheSettings(nextSettings);
 
-        const [channelResponse, feedResponse, watchLaterResponse, watchedResponse] = await Promise.all([
-          api.listChannels(),
-          api.feed(nextSettings, { limit: FEED_PAGE_SIZE }),
-          api.watchLater(),
-          api.watched()
-        ]);
-        setChannels(channelResponse.channels);
-        const feedVideos = visibleVideos(feedResponse.videos);
-        const watchLaterItems = visibleWatchLaterItems(watchLaterResponse.items);
-        setFeed(feedVideos);
-        setFeedCursor(feedResponse.nextCursor);
-        setFeedHasMore(feedResponse.hasMore);
-        setWatchLater(watchLaterItems);
-        setWatchedVideos(watchedResponse.items);
-        await Promise.all([
-          cacheChannels(channelResponse.channels),
-          cacheVideos(feedResponse.videos),
-          cacheWatchLater(watchLaterResponse.items),
-          watchedResponse.items.length ? db.watchedVideos.bulkPut(watchedResponse.items) : Promise.resolve()
-        ]);
-        if (!silent) {
-          setNotice("Synced with GoTube backend.");
-        }
-        return true;
-      } catch (cause) {
-        if (!silent) {
-          setNotice(describeError(cause));
-        }
-        return false;
-      } finally {
-        if (manageBusy) {
-          setBusy(false);
-        }
-      }
-    },
-    [settings, setNotice]
-  );
+      const finishSyncUi = manageBusy ? beginBackendSyncUi() : null;
 
-  const syncAllQuietly = useCallback(
-    async (settingsOverride: SettingsShape) => {
-      setBusy(true);
-      try {
-        await api.syncAll();
-        await refreshRemote(settingsOverride, true, false);
-      } catch {
-        // Startup sync is a best-effort freshness pass; cached and backend-loaded data still render.
-      } finally {
-        setBusy(false);
-      }
+      const runSync = async () => {
+        try {
+          const remoteSettings = await api.getSettings();
+          const nextSettings = { ...(settingsOverride ?? settings), ...remoteSettings.settings };
+          setSettingsState(nextSettings);
+          await cacheSettings(nextSettings);
+
+          const [channelResponse, feedResponse] = await Promise.all([
+            api.listChannels(),
+            api.feed(nextSettings, { limit: FEED_PAGE_SIZE }),
+            enqueueWatchedOperation(async () => {
+              const response = await api.watched();
+              await cacheWatchedSnapshot(response.items);
+              setWatchedVideos(response.items);
+            }),
+            enqueueWatchLaterOperation(async () => {
+              const response = await api.watchLater();
+              const watchLaterItems = await cacheWatchLater(response.items);
+              setWatchLater(watchLaterItems);
+            })
+          ]);
+          setChannels(channelResponse.channels);
+          const feedVideos = visibleVideos(feedResponse.videos);
+          await cacheVideos(feedResponse.videos);
+          setFeed(feedVideos);
+          setFeedCursor(feedResponse.nextCursor);
+          setFeedHasMore(feedResponse.hasMore);
+          await cacheChannels(channelResponse.channels);
+          lastBackendSyncAtRef.current = Date.now();
+          if (!silent) {
+            setNotice("Saved data synced with GoTube.");
+          }
+          return true;
+        } catch (cause) {
+          if (!silent) {
+            setNotice(describeError(cause));
+          }
+          return false;
+        } finally {
+          finishSyncUi?.();
+        }
+      };
+
+      const operation = backendSyncQueueRef.current.then(runSync, runSync);
+      backendSyncQueueRef.current = operation.then(
+        () => undefined,
+        () => undefined
+      );
+
+      backendSyncInFlightRef.current = operation;
+      void operation.then(
+        () => {
+          if (backendSyncInFlightRef.current === operation) {
+            backendSyncInFlightRef.current = null;
+          }
+        },
+        () => {
+          if (backendSyncInFlightRef.current === operation) {
+            backendSyncInFlightRef.current = null;
+          }
+        }
+      );
+      return operation;
     },
-    [refreshRemote]
+    [beginBackendSyncUi, enqueueWatchedOperation, enqueueWatchLaterOperation, settings, setNotice]
   );
 
   const loadOlderFeed = useCallback(async () => {
@@ -269,31 +345,71 @@ function useGoTubeData() {
   }, [feedCursor, loadingOlder, settings]);
 
   useEffect(() => {
-    if (startupSyncStartedRef.current) {
-      return;
-    }
-
-    startupSyncStartedRef.current = true;
     let cancelled = false;
+    startupReadyRef.current = false;
 
     void (async () => {
-      const cachedSettings = await loadCached();
-      if (cancelled) {
-        return;
-      }
-      await refreshHealth();
-      if (!cancelled && getSyncKey()) {
-        const remoteLoaded = await refreshRemote(cachedSettings, true);
-        if (!cancelled && remoteLoaded) {
-          await syncAllQuietly(cachedSettings);
+      let cachedSettings = DEFAULT_SETTINGS;
+      try {
+        try {
+          cachedSettings = await loadCached();
+        } catch {
+          // A damaged or unavailable local cache must not prevent a fresh backend pull.
+        }
+        if (cancelled) {
+          return;
+        }
+        await refreshHealth();
+        if (!cancelled && getSyncKey()) {
+          await refreshRemote(cachedSettings, true, false, true);
+        }
+      } finally {
+        if (!cancelled) {
+          startupReadyRef.current = true;
         }
       }
     })();
 
     return () => {
       cancelled = true;
+      startupReadyRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    function syncWhenActive() {
+      if (
+        !startupReadyRef.current ||
+        !getSyncKey() ||
+        document.visibilityState !== "visible" ||
+        foregroundOperationCountRef.current > 0 ||
+        backendSyncInFlightRef.current ||
+        Date.now() - lastBackendSyncAtRef.current < RESUME_SYNC_THROTTLE_MS
+      ) {
+        return;
+      }
+      void refreshRemote(settings, true, false, true);
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        syncWhenActive();
+      }
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pageshow", syncWhenActive);
+    window.addEventListener("focus", syncWhenActive);
+    window.addEventListener("online", syncWhenActive);
+    window.addEventListener(NATIVE_RESUME_EVENT, syncWhenActive);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pageshow", syncWhenActive);
+      window.removeEventListener("focus", syncWhenActive);
+      window.removeEventListener("online", syncWhenActive);
+      window.removeEventListener(NATIVE_RESUME_EVENT, syncWhenActive);
+    };
+  }, [refreshRemote, settings]);
 
   const updateSetting = useCallback(
     async <K extends keyof SettingsShape>(key: K, value: SettingsShape[K]) => {
@@ -311,25 +427,55 @@ function useGoTubeData() {
     [refreshFeed, settings]
   );
 
+  const syncBackend = useCallback(async () => {
+    if (foregroundOperationCountRef.current > 0) {
+      return;
+    }
+    await refreshRemote(settings);
+  }, [refreshRemote, settings]);
+
   const syncAll = useCallback(async () => {
-    setBusy(true);
+    if (foregroundOperationCountRef.current > 0) {
+      return;
+    }
+    const finishForegroundOperation = beginForegroundOperation();
+    setFeedRefreshing(true);
     try {
       const channelResponse = await api.listChannels();
+      let refreshedChannels = 0;
+      let failedChannels = 0;
       for (const channel of channelResponse.channels) {
-        await api.syncChannel(channel.youtube_channel_id);
+        try {
+          await api.syncChannel(channel.youtube_channel_id);
+          refreshedChannels += 1;
+        } catch {
+          failedChannels += 1;
+        }
       }
       const refreshed = await refreshRemote(settings, true, false);
-      setNotice(refreshed ? "Manual refresh complete." : "Manual refresh synced, but GoTube data could not reload.");
+      if (!refreshed) {
+        setNotice("Feed refresh finished, but saved data could not reload.");
+      } else if (!channelResponse.channels.length) {
+        setNotice("No saved channels to refresh.");
+      } else if (failedChannels) {
+        setNotice(`Feed refreshed for ${refreshedChannels} channels; ${failedChannels} failed.`);
+      } else {
+        setNotice(`Feed refreshed from YouTube for ${refreshedChannels} channels.`);
+      }
     } catch (cause) {
       setNotice(describeError(cause));
     } finally {
-      setBusy(false);
+      setFeedRefreshing(false);
+      finishForegroundOperation();
     }
-  }, [refreshRemote, settings]);
+  }, [beginForegroundOperation, refreshRemote, settings, setNotice]);
 
   const syncOne = useCallback(
     async (youtubeChannelId: string) => {
-      setBusy(true);
+      if (foregroundOperationCountRef.current > 0) {
+        return;
+      }
+      const finishForegroundOperation = beginForegroundOperation();
       try {
         await api.syncChannel(youtubeChannelId);
         await refreshRemote(settings);
@@ -337,41 +483,74 @@ function useGoTubeData() {
       } catch (cause) {
         setNotice(describeError(cause));
       } finally {
-        setBusy(false);
+        finishForegroundOperation();
       }
     },
-    [refreshRemote, settings]
+    [beginForegroundOperation, refreshRemote, settings]
   );
 
   const addWatchLater = useCallback(
     async (video: Video) => {
       try {
-        await api.addWatchLater(video.youtube_video_id);
-        const response = await api.watchLater();
-        setWatchLater(visibleWatchLaterItems(response.items));
-        await cacheVideos([video]);
-        await cacheWatchLater(response.items);
+        await enqueueWatchLaterOperation(async () => {
+          await api.addWatchLater(video.youtube_video_id);
+          const response = await api.watchLater();
+          await cacheVideos([video]);
+          const watchLaterItems = await cacheWatchLater(response.items);
+          setWatchLater(watchLaterItems);
+        });
         setNotice("Added to Watch Later.");
       } catch (cause) {
         setNotice(describeError(cause));
       }
     },
-    []
+    [enqueueWatchLaterOperation, setNotice]
   );
 
   const removeWatchLater = useCallback(async (video: Video) => {
     try {
-      await api.removeWatchLater(video.youtube_video_id);
-      const response = await api.watchLater();
-      setWatchLater(visibleWatchLaterItems(response.items));
-      await cacheWatchLater(response.items);
+      await enqueueWatchLaterOperation(async () => {
+        await api.removeWatchLater(video.youtube_video_id);
+        const response = await api.watchLater();
+        const watchLaterItems = await cacheWatchLater(response.items);
+        setWatchLater(watchLaterItems);
+      });
       setNotice("Removed from Watch Later.");
     } catch (cause) {
       setNotice(describeError(cause));
     }
-  }, []);
+  }, [enqueueWatchLaterOperation, setNotice]);
 
   const markWatched = useCallback(async (video: Video, progressSeconds = video.duration_seconds ?? 0, completed = true) => {
+      try {
+        await enqueueWatchedOperation(async () => {
+          const response = await api.markWatched(video.youtube_video_id, progressSeconds, completed);
+          await cacheWatched(video.youtube_video_id, response.watched.progress_seconds ?? progressSeconds, response.watched.completed ?? completed);
+          setWatchedVideos((items) => [
+            ...items.filter((item) => item.youtube_video_id !== video.youtube_video_id),
+            response.watched
+          ]);
+          setFeed((items) =>
+            items.map((item) =>
+              item.youtube_video_id === video.youtube_video_id
+                ? {
+                    ...item,
+                    watched_at: response.watched.watched_at,
+                    progress_seconds: response.watched.progress_seconds,
+                    completed: response.watched.completed
+                  }
+                : item
+            )
+          );
+        });
+        setNotice(completed ? "Marked watched." : "Progress saved.");
+      } catch (cause) {
+        setNotice(describeError(cause));
+      }
+  }, [enqueueWatchedOperation, setNotice]);
+
+  const saveProgress = useCallback(async (video: Video, progressSeconds: number, completed = false) => {
+    await enqueueWatchedOperation(async () => {
       try {
         const response = await api.markWatched(video.youtube_video_id, progressSeconds, completed);
         await cacheWatched(video.youtube_video_id, response.watched.progress_seconds ?? progressSeconds, response.watched.completed ?? completed);
@@ -391,36 +570,11 @@ function useGoTubeData() {
               : item
           )
         );
-        setNotice(completed ? "Marked watched." : "Progress saved.");
-      } catch (cause) {
-        setNotice(describeError(cause));
+      } catch {
+        await cacheWatched(video.youtube_video_id, progressSeconds, completed);
       }
-  }, []);
-
-  const saveProgress = useCallback(async (video: Video, progressSeconds: number, completed = false) => {
-    try {
-      const response = await api.markWatched(video.youtube_video_id, progressSeconds, completed);
-      await cacheWatched(video.youtube_video_id, response.watched.progress_seconds ?? progressSeconds, response.watched.completed ?? completed);
-      setWatchedVideos((items) => [
-        ...items.filter((item) => item.youtube_video_id !== video.youtube_video_id),
-        response.watched
-      ]);
-      setFeed((items) =>
-        items.map((item) =>
-          item.youtube_video_id === video.youtube_video_id
-            ? {
-                ...item,
-                watched_at: response.watched.watched_at,
-                progress_seconds: response.watched.progress_seconds,
-                completed: response.watched.completed
-              }
-            : item
-        )
-      );
-    } catch {
-      await cacheWatched(video.youtube_video_id, progressSeconds, completed);
-    }
-  }, []);
+    });
+  }, [enqueueWatchedOperation]);
 
   return {
     settings,
@@ -433,11 +587,14 @@ function useGoTubeData() {
     health,
     notice,
     busy,
+    backendSyncing,
+    feedRefreshing,
     setNotice,
     refreshHealth,
     refreshRemote,
     loadOlderFeed,
     updateSetting,
+    syncBackend,
     syncAll,
     syncOne,
     addWatchLater,
@@ -894,10 +1051,28 @@ function DesktopApp() {
                   )}
                 </div>
               ) : (
-                <button className="primaryButton" onClick={() => void data.syncAll()} disabled={data.busy} aria-busy={data.busy}>
-                  <RefreshCw className={data.busy ? "spinIcon" : undefined} aria-hidden="true" />
-                  {data.busy ? "Refreshing" : "Manual Refresh"}
-                </button>
+                <div className="buttonRow sectionActions">
+                  <button
+                    className="secondaryButton"
+                    onClick={() => void data.syncBackend()}
+                    disabled={data.busy}
+                    aria-busy={data.backendSyncing}
+                    title="Pull saved settings, channels, Watch Later, and watched state from GoTube"
+                  >
+                    <Download aria-hidden="true" />
+                    {data.backendSyncing ? "Syncing Data" : "Sync Saved Data"}
+                  </button>
+                  <button
+                    className="primaryButton"
+                    onClick={() => void data.syncAll()}
+                    disabled={data.busy}
+                    aria-busy={data.feedRefreshing}
+                    title="Check YouTube for new uploads, then reload the GoTube feed"
+                  >
+                    <RefreshCw className={data.feedRefreshing ? "spinIcon" : undefined} aria-hidden="true" />
+                    {data.feedRefreshing ? "Refreshing Feed" : "Refresh Feed"}
+                  </button>
+                </div>
               )}
             </div>
             {(selectedChannel ? channelFeed : data.feed).length ? (
@@ -1275,6 +1450,32 @@ function TvApp() {
     );
   }, []);
 
+  const focusAfterTvPageAppend = useCallback(
+    (gridName: "feed" | "channelFeed", previousCount: number, trigger: HTMLElement | null) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          if (active && active !== document.body && active !== trigger && active.dataset.tvFocusable === "true") {
+            return;
+          }
+
+          const cards = Array.from(
+            document.querySelectorAll<HTMLElement>(`[data-tv-grid='${gridName}'] [data-tv-card='true']`)
+          );
+          const sectionFallback = document.querySelector<HTMLElement>(
+            `[data-tv-section='${gridName === "channelFeed" ? "channelFeed" : "feed"}']`
+          );
+          const target =
+            cards[previousCount] ?? (trigger?.isConnected ? trigger : cards[cards.length - 1] ?? sectionFallback);
+          if (target) {
+            focusTvElement(target);
+          }
+        });
+      });
+    },
+    []
+  );
+
   const enterTvCardActions = useCallback((card: HTMLElement) => {
     const cardId = card.dataset.tvCardId;
     if (!cardId) {
@@ -1380,11 +1581,24 @@ function TvApp() {
     }, 40);
   }
 
+  async function loadOlderTvFeed() {
+    if (data.loadingOlder || data.busy) {
+      return;
+    }
+    const previousCount = data.feed.length;
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    await data.loadOlderFeed();
+    focusAfterTvPageAppend("feed", previousCount, trigger);
+  }
+
   async function loadOlderChannelFeed() {
     if (!selectedChannel || !channelFeedCursor || channelFeedLoading) {
       return;
     }
+    const previousCount = channelFeed.length;
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     await loadChannelFeed(selectedChannel, channelFeedCursor);
+    focusAfterTvPageAppend("channelFeed", previousCount, trigger);
   }
 
   function goToSection(nextSection: Exclude<TvSection, "channelFeed">) {
@@ -1503,6 +1717,10 @@ function TvApp() {
           goToSection("feed");
           return;
         }
+        if (window.GoTubeNative?.exitApp) {
+          window.GoTubeNative.exitApp();
+          return;
+        }
         focusSectionStart("feed");
       }
     }
@@ -1565,15 +1783,36 @@ function TvApp() {
             Standard
           </a>
           <button
+            className="secondaryButton"
+            type="button"
+            onClick={() => {
+              if (!data.busy) {
+                void data.syncBackend();
+              }
+            }}
+            aria-disabled={data.busy}
+            aria-busy={data.backendSyncing}
+            data-tv-focusable="true"
+            title="Pull saved GoTube data from the backend"
+          >
+            <Download aria-hidden="true" />
+            {data.backendSyncing ? "Syncing" : "Sync Data"}
+          </button>
+          <button
             className="primaryButton"
             type="button"
-            onClick={() => void data.syncAll()}
-            disabled={data.busy}
-            aria-busy={data.busy}
+            onClick={() => {
+              if (!data.busy) {
+                void data.syncAll();
+              }
+            }}
+            aria-disabled={data.busy}
+            aria-busy={data.feedRefreshing}
             data-tv-focusable="true"
+            title="Check YouTube for new uploads"
           >
-            <RefreshCw className={data.busy ? "spinIcon" : undefined} aria-hidden="true" />
-            {data.busy ? "Refreshing" : "Refresh"}
+            <RefreshCw className={data.feedRefreshing ? "spinIcon" : undefined} aria-hidden="true" />
+            {data.feedRefreshing ? "Refreshing" : "Refresh Feed"}
           </button>
           <button
             className="secondaryButton"
@@ -1628,7 +1867,7 @@ function TvApp() {
         {section === "feed" ? (
           data.feed.length ? (
             <>
-              <div className="tvGrid">
+              <div className="tvGrid" data-tv-grid="feed">
                 {data.feed.map((video) => (
                   <VideoCard
                     key={video.youtube_video_id}
@@ -1646,8 +1885,9 @@ function TvApp() {
                 <div className="tvLoadMoreRow">
                   <button
                     className="secondaryButton"
-                    onClick={data.loadOlderFeed}
-                    disabled={data.loadingOlder || data.busy}
+                    onClick={() => void loadOlderTvFeed()}
+                    aria-disabled={data.loadingOlder || data.busy}
+                    aria-busy={data.loadingOlder}
                     data-tv-focusable="true"
                   >
                     <ChevronDown aria-hidden="true" />
@@ -1765,11 +2005,14 @@ function TvApp() {
               </button>
               <button
                 className="primaryButton"
+                aria-disabled={data.busy || channelFeedLoading}
                 onClick={async () => {
+                  if (data.busy || channelFeedLoading) {
+                    return;
+                  }
                   await data.syncOne(selectedChannel.youtube_channel_id);
                   await loadChannelFeed(selectedChannel);
                 }}
-                disabled={data.busy || channelFeedLoading}
                 data-tv-focusable="true"
               >
                 <RefreshCw aria-hidden="true" />
@@ -1778,7 +2021,7 @@ function TvApp() {
             </div>
             {channelFeed.length ? (
               <>
-                <div className="tvGrid">
+                <div className="tvGrid" data-tv-grid="channelFeed">
                   {channelFeed.map((video) => (
                     <VideoCard
                       key={video.youtube_video_id}
@@ -1796,8 +2039,9 @@ function TvApp() {
                   <div className="tvLoadMoreRow">
                     <button
                       className="secondaryButton"
-                      onClick={loadOlderChannelFeed}
-                      disabled={channelFeedLoading}
+                      onClick={() => void loadOlderChannelFeed()}
+                      aria-disabled={channelFeedLoading}
+                      aria-busy={channelFeedLoading}
                       data-tv-focusable="true"
                     >
                       <ChevronDown aria-hidden="true" />
@@ -1813,8 +2057,9 @@ function TvApp() {
                   <div className="tvLoadMoreRow">
                     <button
                       className="secondaryButton"
-                      onClick={loadOlderChannelFeed}
-                      disabled={channelFeedLoading}
+                      onClick={() => void loadOlderChannelFeed()}
+                      aria-disabled={channelFeedLoading}
+                      aria-busy={channelFeedLoading}
                       data-tv-focusable="true"
                     >
                       <ChevronDown aria-hidden="true" />
