@@ -758,6 +758,7 @@ function DesktopApp() {
   const [bulkImportDraft, setBulkImportDraft] = useState("");
   const [bulkImporting, setBulkImporting] = useState(false);
   const [syncKeyDraft, setSyncKeyDraft] = useState(getSyncKey());
+  const [showSyncKey, setShowSyncKey] = useState(false);
   const watchLaterVideos = useMemo(() => data.watchLater.map((item) => item.video), [data.watchLater]);
   const watchedById = useMemo(
     () => new Map(data.watchedVideos.map((item) => [item.youtube_video_id, item])),
@@ -1328,13 +1329,40 @@ function DesktopApp() {
             </div>
             <div className="settingsGrid">
               <form className="settingsPanel" onSubmit={saveSyncKey}>
-                <h3>Private Sync Key</h3>
+                <h3><label htmlFor="privateSyncKey">Private Sync Key</label></h3>
                 <input
-                  type="password"
+                  id="privateSyncKey"
+                  type={showSyncKey ? "text" : "password"}
                   value={syncKeyDraft}
                   onChange={(event) => setSyncKeyDraft(event.target.value)}
                   placeholder="Enter GOTUBE_SYNC_KEY"
                 />
+                <div className="buttonRow">
+                  <button
+                    className="secondaryButton"
+                    type="button"
+                    aria-controls="privateSyncKey"
+                    aria-pressed={showSyncKey}
+                    onClick={() => setShowSyncKey((visible) => !visible)}
+                  >
+                    {showSyncKey ? "Hide Key" : "Show Key"}
+                  </button>
+                  <button
+                    className="secondaryButton"
+                    type="button"
+                    disabled={!syncKeyDraft}
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(syncKeyDraft);
+                        data.setNotice("Sync key copied.");
+                      } catch {
+                        data.setNotice("Could not copy the sync key. Use Show Key to copy it manually.");
+                      }
+                    }}
+                  >
+                    Copy Key
+                  </button>
+                </div>
                 <button className="primaryButton" type="submit">
                   <Check aria-hidden="true" />
                   Save Key
