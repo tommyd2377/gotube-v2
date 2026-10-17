@@ -62,6 +62,7 @@ const tabs: Array<{ id: TabId; label: string; icon: typeof Rss }> = [
   { id: "settings", label: "Settings", icon: Settings }
 ];
 const FEED_PAGE_SIZE = 20;
+const HISTORY_PAGE_SIZE = 20;
 const CHANNEL_PAGE_SIZE = 10;
 const RESUME_SYNC_THROTTLE_MS = 3_000;
 const NATIVE_RESUME_EVENT = "gotube:native-resume";
@@ -776,6 +777,7 @@ function TvKeyboardOverlay({
 function DesktopApp() {
   const data = useGoTubeData();
   const [activeTab, setActiveTab] = useState<TabId>("feed");
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [searchType, setSearchType] = useState<"video" | "channel">("video");
@@ -1022,6 +1024,9 @@ function DesktopApp() {
               className={activeTab === tab.id && (tab.id !== "feed" || !selectedChannel) ? "tab active" : "tab"}
               onClick={() => {
                 setActiveTab(tab.id);
+                if (tab.id === "history") {
+                  setHistoryVisibleCount(HISTORY_PAGE_SIZE);
+                }
                 if (tab.id === "feed") {
                   returnToMainFeed();
                 }
@@ -1210,19 +1215,29 @@ function DesktopApp() {
               </div>
             </div>
             {data.historyVideos.length ? (
-              <div className="videoGrid">
-                {data.historyVideos.map((video) => (
-                  <VideoCard
-                    key={video.youtube_video_id}
-                    video={video}
-                    watched={watchedById.get(video.youtube_video_id)}
-                    onPlay={playVideo}
-                    onChannelOpen={openVideoChannel}
-                    onWatchLater={data.addWatchLater}
-                    onMarkWatched={data.markWatched}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="videoGrid">
+                  {data.historyVideos.slice(0, historyVisibleCount).map((video) => (
+                    <VideoCard
+                      key={video.youtube_video_id}
+                      video={video}
+                      watched={watchedById.get(video.youtube_video_id)}
+                      onPlay={playVideo}
+                      onChannelOpen={openVideoChannel}
+                      onWatchLater={data.addWatchLater}
+                      onMarkWatched={data.markWatched}
+                    />
+                  ))}
+                </div>
+                {historyVisibleCount < data.historyVideos.length ? (
+                  <div className="loadMoreRow">
+                    <button className="secondaryButton" onClick={() => setHistoryVisibleCount((count) => count + HISTORY_PAGE_SIZE)}>
+                      <ChevronDown aria-hidden="true" />
+                      Load Older
+                    </button>
+                  </div>
+                ) : null}
+              </>
             ) : (
               <EmptyState title="No watch history" body="Videos you play or mark watched in GoTube appear here." />
             )}
@@ -1496,6 +1511,7 @@ function DesktopApp() {
 function TvApp() {
   const data = useGoTubeData();
   const [section, setSection] = useState<TvSection>("feed");
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -1539,7 +1555,7 @@ function TvApp() {
   }, []);
 
   const focusAfterTvPageAppend = useCallback(
-    (gridName: "feed" | "channelFeed", previousCount: number, trigger: HTMLElement | null) => {
+    (gridName: "feed" | "channelFeed" | "history", previousCount: number, trigger: HTMLElement | null) => {
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
           const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1551,7 +1567,7 @@ function TvApp() {
             document.querySelectorAll<HTMLElement>(`[data-tv-grid='${gridName}'] [data-tv-card='true']`)
           );
           const sectionFallback = document.querySelector<HTMLElement>(
-            `[data-tv-section='${gridName === "channelFeed" ? "channelFeed" : "feed"}']`
+            `[data-tv-section='${gridName}']`
           );
           const target =
             cards[previousCount] ?? (trigger?.isConnected ? trigger : cards[cards.length - 1] ?? sectionFallback);
@@ -1689,7 +1705,20 @@ function TvApp() {
     focusAfterTvPageAppend("channelFeed", previousCount, trigger);
   }
 
+  function loadOlderTvHistory() {
+    const previousCount = Math.min(historyVisibleCount, data.historyVideos.length);
+    if (previousCount >= data.historyVideos.length) {
+      return;
+    }
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setHistoryVisibleCount((count) => count + HISTORY_PAGE_SIZE);
+    focusAfterTvPageAppend("history", previousCount, trigger);
+  }
+
   function goToSection(nextSection: Exclude<TvSection, "channelFeed">) {
+    if (nextSection === "history") {
+      setHistoryVisibleCount(HISTORY_PAGE_SIZE);
+    }
     setActiveActionCardId(null);
     setSelectedChannel(null);
     setChannelFeed([]);
@@ -1994,20 +2023,30 @@ function TvApp() {
 
         {section === "history" ? (
           data.historyVideos.length ? (
-            <div className="tvGrid" data-tv-grid="history">
-              {data.historyVideos.map((video) => (
-                <VideoCard
-                  key={video.youtube_video_id}
-                  video={video}
-                  watched={watchedById.get(video.youtube_video_id)}
-                  tvMode
-                  tvActionsActive={activeActionCardId === video.youtube_video_id}
-                  onPlay={openTvVideo}
-                  onWatchLater={data.addWatchLater}
-                  onMarkWatched={data.markWatched}
-                />
-              ))}
-            </div>
+            <>
+              <div className="tvGrid" data-tv-grid="history">
+                {data.historyVideos.slice(0, historyVisibleCount).map((video) => (
+                  <VideoCard
+                    key={video.youtube_video_id}
+                    video={video}
+                    watched={watchedById.get(video.youtube_video_id)}
+                    tvMode
+                    tvActionsActive={activeActionCardId === video.youtube_video_id}
+                    onPlay={openTvVideo}
+                    onWatchLater={data.addWatchLater}
+                    onMarkWatched={data.markWatched}
+                  />
+                ))}
+              </div>
+              {historyVisibleCount < data.historyVideos.length ? (
+                <div className="tvLoadMoreRow">
+                  <button className="secondaryButton" onClick={loadOlderTvHistory} data-tv-focusable="true">
+                    <ChevronDown aria-hidden="true" />
+                    Load Older
+                  </button>
+                </div>
+              ) : null}
+            </>
           ) : (
             <EmptyState title="No watch history" body="Videos you play or mark watched in GoTube appear here." />
           )
