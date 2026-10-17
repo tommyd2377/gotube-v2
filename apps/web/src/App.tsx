@@ -1933,15 +1933,6 @@ function TvApp() {
             <RefreshCw className={data.feedRefreshing ? "spinIcon" : undefined} aria-hidden="true" />
             {data.feedRefreshing ? "Refreshing" : "Refresh Feed"}
           </button>
-          <button
-            className="secondaryButton"
-            type="button"
-            onClick={() => goToSection("settings")}
-            data-tv-focusable="true"
-            data-tv-section="settings"
-          >
-            Settings
-          </button>
         </div>
       </header>
 
