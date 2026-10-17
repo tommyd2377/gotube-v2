@@ -194,12 +194,13 @@ export async function cachedFeed(_settings: SettingsShape, limit?: number) {
   });
 }
 
-export async function cacheWatched(youtubeVideoId: string, progressSeconds = 0, completed = true) {
+export async function cacheWatched(youtubeVideoId: string, progressSeconds = 0, completed = true, video?: Video) {
   await db.watchedVideos.put({
     youtube_video_id: youtubeVideoId,
     watched_at: new Date().toISOString(),
     progress_seconds: progressSeconds,
-    completed
+    completed,
+    video
   });
 }
 

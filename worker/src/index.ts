@@ -892,6 +892,7 @@ async function searchYouTube(env: Env, q: string, type: "video" | "channel") {
       if (!video || isShortFormVideo(video, DEFAULT_SETTINGS.shortsThresholdSeconds)) {
         return [] satisfies SearchResult[];
       }
+      await upsertVideos(env, [video]);
       return [searchVideoResultFromRow(video)] satisfies SearchResult[];
     }
   }
@@ -989,6 +990,9 @@ async function searchYouTube(env: Env, q: string, type: "video" | "channel") {
     ];
   });
 
+  if (videoResults.length) {
+    await upsertVideos(env, videoResults);
+  }
   return rankVideoSearchResults(q, videoResults) satisfies SearchResult[];
 }
 
@@ -1221,6 +1225,22 @@ async function getFeed(env: Env, url: URL) {
   };
 }
 
+async function getHistory(env: Env) {
+  const watched = await listWatched(env);
+  if (!watched.length) {
+    return [];
+  }
+  const [channels, videos] = await Promise.all([
+    listChannels(env, true),
+    listVideosByIds(env, watched.map((item) => item.youtube_video_id))
+  ]);
+  const videosById = new Map(videos.map((video) => [video.youtube_video_id, video]));
+  return watched.map((item) => {
+    const video = videosById.get(item.youtube_video_id);
+    return { ...item, video: video ? withChannelInfo(video, channels, [item]) : undefined };
+  });
+}
+
 async function getWatchLater(env: Env) {
   const [channels, watchLater, watched] = await Promise.all([listChannels(env, true), listWatchLater(env), listWatched(env)]);
   const videos = await listVideosByIds(
@@ -1369,7 +1389,7 @@ async function handleRequest(request: Request, env: Env) {
   }
 
   if (resource === "watched" && request.method === "GET") {
-    return json({ items: await listWatched(env) });
+    return json({ items: await getHistory(env) });
   }
 
   if (resource === "settings" && request.method === "GET" && !id) {

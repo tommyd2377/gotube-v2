@@ -52,6 +52,7 @@ export interface WatchLaterItem {
 }
 
 export interface WatchedVideo {
+  video?: Video;
   youtube_video_id: string;
   watched_at?: string;
   progress_seconds?: number;

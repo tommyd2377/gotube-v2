@@ -8,6 +8,7 @@ import {
   Github,
   Globe2,
   HeartPulse,
+  History,
   Linkedin,
   ListVideo,
   Plus,
@@ -46,8 +47,8 @@ import { focusFirstTvElement, focusNearestTvElement, focusTvElement, type TvDire
 import type { Channel, SearchResult, SearchVideoResult, SettingsShape, Video, WatchedVideo, WatchLaterItem } from "./lib/types";
 import { visibleVideos, visibleWatchLaterItems } from "./lib/videoFilter";
 
-type TabId = "feed" | "watchLater" | "search" | "channels" | "settings";
-type TvSection = "feed" | "watchLater" | "search" | "channels" | "channelFeed" | "settings";
+type TabId = "feed" | "watchLater" | "search" | "channels" | "history" | "settings";
+type TvSection = "feed" | "watchLater" | "search" | "channels" | "channelFeed" | "history" | "settings";
 type HealthState = "checking" | "ok" | "error";
 type ChannelFeedTarget = Pick<Channel, "youtube_channel_id" | "title" | "description" | "thumbnail_url" | "custom_url" | "last_checked_at">;
 
@@ -57,6 +58,7 @@ const tabs: Array<{ id: TabId; label: string; icon: typeof Rss }> = [
   { id: "watchLater", label: "Watch Later", icon: Clock },
   { id: "search", label: "Search", icon: Search },
   { id: "channels", label: "Channels", icon: ListVideo },
+  { id: "history", label: "History", icon: History },
   { id: "settings", label: "Settings", icon: Settings }
 ];
 const FEED_PAGE_SIZE = 20;
@@ -127,6 +129,19 @@ function useGoTubeData() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [watchLater, setWatchLater] = useState<WatchLaterItem[]>([]);
   const [watchedVideos, setWatchedVideos] = useState<WatchedVideo[]>([]);
+  const historyVideos = useMemo(
+    () => visibleVideos(
+      [...watchedVideos]
+        .sort((a, b) => (b.watched_at ?? "").localeCompare(a.watched_at ?? ""))
+        .map((item) => withWatchedState(item.video ?? {
+          youtube_video_id: item.youtube_video_id,
+          youtube_channel_id: "",
+          title: "Metadata unavailable",
+          description: "GoTube has saved playback history for this video."
+        }, item))
+    ),
+    [watchedVideos]
+  );
   const [health, setHealth] = useState<HealthState>("checking");
   const [notice, setNoticeState] = useState("");
   const [noticeToken, setNoticeToken] = useState(0);
@@ -232,7 +247,11 @@ function useGoTubeData() {
     setFeedCursor(cursorFromVideos(cachedPage));
     setFeedHasMore(cachedVideos.length > FEED_PAGE_SIZE);
     setWatchLater(visibleWatchLaterItems(cachedWatchLater));
-    setWatchedVideos(cachedWatched);
+    const cachedHistoryVideos = await db.videos.bulkGet(cachedWatched.map((item) => item.youtube_video_id));
+    setWatchedVideos(cachedWatched.map((item, index) => ({
+      ...item,
+      video: cachedHistoryVideos[index] ?? item.video
+    })));
     return cachedSettings;
   }, []);
 
@@ -266,6 +285,12 @@ function useGoTubeData() {
             api.feed(nextSettings, { limit: FEED_PAGE_SIZE }),
             enqueueWatchedOperation(async () => {
               const response = await api.watched();
+              await cacheVideos(response.items.flatMap((item) => item.video ? [item.video] : []));
+              const cachedHistoryVideos = await db.videos.bulkGet(response.items.map((item) => item.youtube_video_id));
+              response.items = response.items.map((item, index) => ({
+                ...item,
+                video: cachedHistoryVideos[index] ?? item.video
+              }));
               await cacheWatchedSnapshot(response.items);
               setWatchedVideos(response.items);
             }),
@@ -525,10 +550,11 @@ function useGoTubeData() {
       try {
         await enqueueWatchedOperation(async () => {
           const response = await api.markWatched(video.youtube_video_id, progressSeconds, completed);
-          await cacheWatched(video.youtube_video_id, response.watched.progress_seconds ?? progressSeconds, response.watched.completed ?? completed);
+          await cacheVideos([video]);
+          await cacheWatched(video.youtube_video_id, response.watched.progress_seconds ?? progressSeconds, response.watched.completed ?? completed, video);
           setWatchedVideos((items) => [
             ...items.filter((item) => item.youtube_video_id !== video.youtube_video_id),
-            response.watched
+            { ...response.watched, video }
           ]);
           setFeed((items) =>
             items.map((item) =>
@@ -553,10 +579,11 @@ function useGoTubeData() {
     await enqueueWatchedOperation(async () => {
       try {
         const response = await api.markWatched(video.youtube_video_id, progressSeconds, completed);
-        await cacheWatched(video.youtube_video_id, response.watched.progress_seconds ?? progressSeconds, response.watched.completed ?? completed);
+        await cacheVideos([video]);
+        await cacheWatched(video.youtube_video_id, response.watched.progress_seconds ?? progressSeconds, response.watched.completed ?? completed, video);
         setWatchedVideos((items) => [
           ...items.filter((item) => item.youtube_video_id !== video.youtube_video_id),
-          response.watched
+          { ...response.watched, video }
         ]);
         setFeed((items) =>
           items.map((item) =>
@@ -571,7 +598,11 @@ function useGoTubeData() {
           )
         );
       } catch {
-        await cacheWatched(video.youtube_video_id, progressSeconds, completed);
+        await cacheWatched(video.youtube_video_id, progressSeconds, completed, video);
+        setWatchedVideos((items) => [
+          ...items.filter((item) => item.youtube_video_id !== video.youtube_video_id),
+          { youtube_video_id: video.youtube_video_id, watched_at: new Date().toISOString(), progress_seconds: progressSeconds, completed, video }
+        ]);
       }
     });
   }, [enqueueWatchedOperation]);
@@ -584,6 +615,7 @@ function useGoTubeData() {
     loadingOlder,
     watchLater,
     watchedVideos,
+    historyVideos,
     health,
     notice,
     busy,
@@ -1165,6 +1197,34 @@ function DesktopApp() {
               </div>
             ) : (
               <EmptyState title="Nothing saved" body="Use Search or Feed to add videos to Watch Later." />
+            )}
+          </section>
+        ) : null}
+
+        {activeTab === "history" ? (
+          <section>
+            <div className="sectionHeader">
+              <div>
+                <h2>History</h2>
+                <p>Your watched and in-progress videos, most recently watched first.</p>
+              </div>
+            </div>
+            {data.historyVideos.length ? (
+              <div className="videoGrid">
+                {data.historyVideos.map((video) => (
+                  <VideoCard
+                    key={video.youtube_video_id}
+                    video={video}
+                    watched={watchedById.get(video.youtube_video_id)}
+                    onPlay={playVideo}
+                    onChannelOpen={openVideoChannel}
+                    onWatchLater={data.addWatchLater}
+                    onMarkWatched={data.markWatched}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyState title="No watch history" body="Videos you play or mark watched in GoTube appear here." />
             )}
           </section>
         ) : null}
@@ -1800,9 +1860,11 @@ function TvApp() {
                     ? "Search"
                     : section === "channelFeed"
                       ? selectedChannel?.title ?? "Channel"
-                      : section === "settings"
-                        ? "Settings"
-                        : "Channels"}
+                      : section === "history"
+                        ? "History"
+                        : section === "settings"
+                          ? "Settings"
+                          : "Channels"}
             </h1>
           </div>
         </button>
@@ -1854,39 +1916,18 @@ function TvApp() {
         </div>
       </header>
 
-      <nav className="tvNav">
-        <button
-          className={section === "feed" ? "active" : ""}
-          onClick={() => goToSection("feed")}
-          data-tv-focusable="true"
-          data-tv-section="feed"
-        >
-          Feed
-        </button>
-        <button
-          className={section === "watchLater" ? "active" : ""}
-          onClick={() => goToSection("watchLater")}
-          data-tv-focusable="true"
-          data-tv-section="watchLater"
-        >
-          Watch Later
-        </button>
-        <button
-          className={section === "search" ? "active" : ""}
-          onClick={() => goToSection("search")}
-          data-tv-focusable="true"
-          data-tv-section="search"
-        >
-          Search
-        </button>
-        <button
-          className={section === "channels" || section === "channelFeed" ? "active" : ""}
-          onClick={() => goToSection("channels")}
-          data-tv-focusable="true"
-          data-tv-section="channels"
-        >
-          Channels
-        </button>
+      <nav className="tvNav" aria-label="GoTube sections">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            className={section === tab.id || (tab.id === "channels" && section === "channelFeed") ? "active" : ""}
+            onClick={() => goToSection(tab.id)}
+            data-tv-focusable="true"
+            data-tv-section={tab.id}
+          >
+            {tab.label}
+          </button>
+        ))}
       </nav>
 
       {data.notice ? <div className="tvNotice" role="status">{data.notice}</div> : null}
@@ -1948,6 +1989,27 @@ function TvApp() {
             </div>
           ) : (
             <EmptyState title="No saved videos" body="Videos you add to Watch Later appear here." />
+          )
+        ) : null}
+
+        {section === "history" ? (
+          data.historyVideos.length ? (
+            <div className="tvGrid" data-tv-grid="history">
+              {data.historyVideos.map((video) => (
+                <VideoCard
+                  key={video.youtube_video_id}
+                  video={video}
+                  watched={watchedById.get(video.youtube_video_id)}
+                  tvMode
+                  tvActionsActive={activeActionCardId === video.youtube_video_id}
+                  onPlay={openTvVideo}
+                  onWatchLater={data.addWatchLater}
+                  onMarkWatched={data.markWatched}
+                />
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="No watch history" body="Videos you play or mark watched in GoTube appear here." />
           )
         ) : null}
 

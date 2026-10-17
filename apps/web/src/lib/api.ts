@@ -1,4 +1,4 @@
-import type { Channel, ChannelPageResponse, FeedResponse, SearchResult, SettingsShape, Video, WatchLaterItem } from "./types";
+import type { Channel, ChannelPageResponse, FeedResponse, SearchResult, SettingsShape, Video, WatchedVideo, WatchLaterItem } from "./types";
 
 const DEFAULT_API_BASE = import.meta.env.PROD ? "https://gotube-api.gotube-215613.workers.dev/api" : "/api";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE;
@@ -118,7 +118,7 @@ export const api = {
       keepalive: true,
       body: JSON.stringify({ youtubeVideoId, progressSeconds, completed })
     }),
-  watched: () => apiFetch<{ items: Array<{ youtube_video_id: string; watched_at?: string; progress_seconds?: number; completed?: boolean }> }>("/watched"),
+  watched: () => apiFetch<{ items: WatchedVideo[] }>("/watched"),
   getSettings: () => apiFetch<{ settings: SettingsShape }>("/settings"),
   putSetting: (key: keyof SettingsShape, value: SettingsShape[keyof SettingsShape]) =>
     apiFetch<{ setting: { key: string; value: unknown } }>(`/settings/${encodeURIComponent(key)}`, {

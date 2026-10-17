@@ -329,7 +329,7 @@ svg {
 .backToTopButton {
   position: fixed;
   z-index: 8;
-  bottom: max(18px, env(safe-area-inset-bottom));
+  bottom: calc(max(18px, env(safe-area-inset-bottom)) + 44px);
   left: 50%;
   display: inline-flex;
   align-items: center;
@@ -1069,7 +1069,7 @@ textarea::placeholder {
 
 .tvNav {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(6, minmax(100px, 1fr));
   gap: 10px;
   margin: 12px 0 16px;
   padding-bottom: 12px;
@@ -1114,6 +1114,10 @@ textarea::placeholder {
   height: clamp(280px, 16vw, 300px);
   background: var(--panel-strong);
   border: 2px solid var(--border);
+}
+
+.tvGrid[data-tv-grid="history"] .tvVideoCard {
+  height: auto;
 }
 
 .tvVideoCard[data-tv-actions-active="true"] {
@@ -1648,7 +1652,7 @@ textarea::placeholder {
   }
 
   .tvNav {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .tvNav button {
