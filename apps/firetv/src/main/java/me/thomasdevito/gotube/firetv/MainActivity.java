@@ -27,8 +27,13 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -111,9 +116,37 @@ public final class MainActivity extends Activity {
 
     view.setWebChromeClient(new GoTubeWebChromeClient());
     view.setWebViewClient(new GoTubeWebViewClient());
+    installVideoCodecCompatibility(view);
     view.setFocusable(true);
     view.setFocusableInTouchMode(true);
     view.requestFocus();
+  }
+
+  private void installVideoCodecCompatibility(WebView view) {
+    // Restrict this workaround to the model on which AV1 stalls were reproduced.
+    if (!"AFTHA004".equals(Build.MODEL)) {
+      return;
+    }
+    try {
+      if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+        Log.i("GoTubePlayer", "codec-compat: document-start injection unavailable");
+        return;
+      }
+      try (InputStream input = getAssets().open("youtube-codec-compat.js")) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+          output.write(buffer, 0, count);
+        }
+        WebViewCompat.addDocumentStartJavaScript(view,
+          new String(output.toByteArray(), StandardCharsets.UTF_8),
+          Collections.singleton("https://www.youtube.com"));
+        Log.i("GoTubePlayer", "codec-compat: document-start rule registered");
+      }
+    } catch (IOException | RuntimeException | LinkageError error) {
+      Log.i("GoTubePlayer", "codec-compat: registration failed (" + error.getClass().getSimpleName() + ")");
+    }
   }
 
   @Override

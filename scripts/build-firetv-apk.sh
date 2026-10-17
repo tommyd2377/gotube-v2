@@ -10,6 +10,7 @@ GENERATED_R_DIR="$BUILD_DIR/generated/r"
 CLASSES_DIR="$BUILD_DIR/classes"
 DEX_DIR="$BUILD_DIR/dex"
 OUTPUT_DIR="$BUILD_DIR/outputs"
+DEPS_DIR="$BUILD_DIR/deps"
 
 ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
 ANDROID_PLATFORM="${ANDROID_PLATFORM:-$(find "$ANDROID_SDK_ROOT/platforms" -maxdepth 1 -type d -name 'android-*' | sort | tail -1 | xargs basename)}"
@@ -42,10 +43,30 @@ if [[ -z "${GOTUBE_API_BASE_URL:-}" && -z "${GOTUBE_TV_URL:-}" ]]; then
 fi
 
 rm -rf "$BUILD_DIR"
-mkdir -p "$ASSETS_DIR/gotube" "$GENERATED_R_DIR" "$CLASSES_DIR" "$DEX_DIR" "$OUTPUT_DIR"
+mkdir -p "$ASSETS_DIR/gotube" "$GENERATED_R_DIR" "$CLASSES_DIR" "$DEX_DIR" "$OUTPUT_DIR" "$DEPS_DIR"
+
+# Only the document-start WebKit API is used; it has no runtime Core dependency.
+# WebKit's unused WebViewAssetLoader is the only class referencing Core's Pair.
+fetch_android_dependency() {
+  local name="$1" expected_sha="$2" url="$3"
+  curl --fail --silent --show-error --location --connect-timeout 15 --max-time 120 "$url" -o "$DEPS_DIR/$name"
+  local actual_sha
+  actual_sha="$(shasum -a 256 "$DEPS_DIR/$name" | cut -d ' ' -f 1)"
+  if [[ "$actual_sha" != "$expected_sha" ]]; then
+    echo "Checksum mismatch for $name" >&2
+    exit 1
+  fi
+}
+
+fetch_android_dependency webkit.aar 27bc203135f05b984fc218d5a9c709f0949a19a488615f2349ebdcd9e6f722a2 \
+  https://dl.google.com/dl/android/maven2/androidx/webkit/webkit/1.9.0/webkit-1.9.0.aar
+fetch_android_dependency annotation.jar 9029262bddce116e6d02be499e4afdba21f24c239087b76b3b57d7e98b490a36 \
+  https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/1.2.0/annotation-1.2.0.jar
+unzip -p "$DEPS_DIR/webkit.aar" classes.jar > "$DEPS_DIR/webkit.jar"
 
 VITE_API_BASE_URL="${GOTUBE_API_BASE_URL:-}" npm --workspace apps/web run build -- --base=./
 cp -R "$WEB_DIR/dist/." "$ASSETS_DIR/gotube/"
+cp "$APP_DIR/src/main/assets/youtube-codec-compat.js" "$ASSETS_DIR/"
 
 {
   printf 'tvUrl=%s\n' "${GOTUBE_TV_URL:-}"
@@ -70,13 +91,16 @@ SIGNED_APK="$OUTPUT_DIR/gotube-firetv-debug.apk"
   --target-sdk-version "$TARGET_SDK"
 
 find "$APP_DIR/src/main/java" "$GENERATED_R_DIR" -name '*.java' > "$BUILD_DIR/java-sources.txt"
-javac -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$CLASSES_DIR" @"$BUILD_DIR/java-sources.txt"
+javac -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
+  -classpath "$DEPS_DIR/webkit.jar:$DEPS_DIR/annotation.jar" \
+  -d "$CLASSES_DIR" @"$BUILD_DIR/java-sources.txt"
 
 find "$CLASSES_DIR" -name '*.class' > "$BUILD_DIR/class-files.txt"
-"$D8" --lib "$ANDROID_JAR" --min-api "$MIN_SDK" --output "$DEX_DIR" @"$BUILD_DIR/class-files.txt"
+"$D8" --lib "$ANDROID_JAR" --min-api "$MIN_SDK" --output "$DEX_DIR" \
+  @"$BUILD_DIR/class-files.txt" "$DEPS_DIR/webkit.jar" "$DEPS_DIR/annotation.jar"
 
 cp "$UNSIGNED_APK" "$UNALIGNED_APK"
-(cd "$DEX_DIR" && zip -q -u "$UNALIGNED_APK" classes.dex)
+(cd "$DEX_DIR" && zip -q -u "$UNALIGNED_APK" classes*.dex)
 
 "$ZIPALIGN" -f 4 "$UNALIGNED_APK" "$ALIGNED_APK"
 "$APKSIGNER" sign \
