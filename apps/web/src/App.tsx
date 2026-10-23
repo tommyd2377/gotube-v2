@@ -21,11 +21,13 @@ import {
   Trash2,
   Tv,
   Twitter,
-  Upload
+  Upload,
+  X
 } from "lucide-react";
 import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LinkifiedText } from "./components/LinkifiedText";
 import { PlayerOverlay } from "./components/PlayerOverlay";
+import { LoadingState } from "./components/LoadingState";
 import { VideoCard } from "./components/VideoCard";
 import { ApiError, api, getSyncKey, setSyncKey } from "./lib/api";
 import {
@@ -143,6 +145,9 @@ function useGoTubeData() {
     ),
     [watchedVideos]
   );
+  const [cacheReady, setCacheReady] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialError, setInitialError] = useState("");
   const [health, setHealth] = useState<HealthState>("checking");
   const [notice, setNoticeState] = useState("");
   const [noticeToken, setNoticeToken] = useState(0);
@@ -309,6 +314,7 @@ function useGoTubeData() {
           setFeedHasMore(feedResponse.hasMore);
           await cacheChannels(channelResponse.channels);
           lastBackendSyncAtRef.current = Date.now();
+          setInitialError("");
           if (!silent) {
             setNotice("Saved data synced with GoTube.");
           }
@@ -373,6 +379,12 @@ function useGoTubeData() {
   useEffect(() => {
     let cancelled = false;
     startupReadyRef.current = false;
+    const timeout = window.setTimeout(() => {
+      if (!cancelled) {
+        setInitialLoading(false);
+        setInitialError("Loading is taking longer than expected. Try Sync Saved Data again.");
+      }
+    }, 15000);
 
     void (async () => {
       let cachedSettings = DEFAULT_SETTINGS;
@@ -381,16 +393,21 @@ function useGoTubeData() {
           cachedSettings = await loadCached();
         } catch {
           // A damaged or unavailable local cache must not prevent a fresh backend pull.
+        } finally {
+          if (!cancelled) setCacheReady(true);
         }
         if (cancelled) {
           return;
         }
         await refreshHealth();
         if (!cancelled && getSyncKey()) {
-          await refreshRemote(cachedSettings, true, false, true);
+          const loaded = await refreshRemote(cachedSettings, true, false, true);
+          if (!cancelled && !loaded) setInitialError("Saved data could not load. Check your connection and try Sync Saved Data again.");
         }
       } finally {
+        window.clearTimeout(timeout);
         if (!cancelled) {
+          setInitialLoading(false);
           startupReadyRef.current = true;
         }
       }
@@ -398,6 +415,7 @@ function useGoTubeData() {
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
       startupReadyRef.current = false;
     };
   }, []);
@@ -617,6 +635,9 @@ function useGoTubeData() {
     watchLater,
     watchedVideos,
     historyVideos,
+    cacheReady,
+    initialLoading,
+    initialError,
     health,
     notice,
     busy,
@@ -776,13 +797,18 @@ function TvKeyboardOverlay({
 
 function DesktopApp() {
   const data = useGoTubeData();
+  useEffect(() => {
+    if (data.cacheReady) window.dispatchEvent(new Event("gotube:app-ready"));
+  }, [data.cacheReady]);
   const [activeTab, setActiveTab] = useState<TabId>("feed");
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [searchType, setSearchType] = useState<"video" | "channel">("video");
   const [query, setQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
   const [addingChannelId, setAddingChannelId] = useState<string | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<ChannelFeedTarget | null>(null);
   const [channelFeed, setChannelFeed] = useState<Video[]>([]);
@@ -877,12 +903,16 @@ function DesktopApp() {
       return;
     }
 
+    if (searching) return;
+    setSearching(true);
     try {
       const response = await api.search(query.trim(), searchType);
       setResults(response.results);
       data.setNotice("Search complete.");
     } catch (cause) {
       data.setNotice(describeError(cause));
+    } finally {
+      setSearching(false);
     }
   }
 
@@ -1005,7 +1035,9 @@ function DesktopApp() {
             <img className="brandMarkImage" src="/brand/gotube-icon.svg" alt="" aria-hidden="true" />
           </div>
           <div>
-            <h1>GoTube</h1>
+            <h1>
+              <img src="/brand/gotube-wordmark.svg" alt="GoTube" width="135" height="28" style={{ display: "block", width: "auto", height: "1.1em" }} />
+            </h1>
             <p>Intentional YouTube, private subscriptions, no recommendations.</p>
           </div>
         </button>
@@ -1113,7 +1145,11 @@ function DesktopApp() {
                 </div>
               )}
             </div>
-            {(selectedChannel ? channelFeed : data.feed).length ? (
+            {(selectedChannel ? channelFeedLoading && !channelFeed.length : data.initialLoading && !data.feed.length) ? (
+              <LoadingState label="Loading videos…" />
+            ) : !selectedChannel && data.initialError && !data.feed.length ? (
+              <EmptyState title="Could not load videos" body={data.initialError} />
+            ) : (selectedChannel ? channelFeed : data.feed).length ? (
               <>
                 <div className="videoGrid">
                   {(selectedChannel ? channelFeed : data.feed).map((video) => (
@@ -1185,7 +1221,11 @@ function DesktopApp() {
                 <p>Your GoTube queue, stored outside YouTube account data.</p>
               </div>
             </div>
-            {watchLaterVideos.length ? (
+            {data.initialLoading && !watchLaterVideos.length ? (
+              <LoadingState label="Loading saved videos…" />
+            ) : data.initialError && !watchLaterVideos.length ? (
+              <EmptyState title="Could not load saved videos" body={data.initialError} />
+            ) : watchLaterVideos.length ? (
               <div className="videoGrid">
                 {watchLaterVideos.map((video) => (
                   <VideoCard
@@ -1214,7 +1254,11 @@ function DesktopApp() {
                 <p>Your watched and in-progress videos, most recently watched first.</p>
               </div>
             </div>
-            {data.historyVideos.length ? (
+            {data.initialLoading && !data.historyVideos.length ? (
+              <LoadingState label="Loading history…" />
+            ) : data.initialError && !data.historyVideos.length ? (
+              <EmptyState title="Could not load history" body={data.initialError} />
+            ) : data.historyVideos.length ? (
               <>
                 <div className="videoGrid">
                   {data.historyVideos.slice(0, historyVisibleCount).map((video) => (
@@ -1253,11 +1297,29 @@ function DesktopApp() {
               </div>
             </div>
             <form className="searchForm" onSubmit={onSearch}>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={searchType === "channel" ? "Channel name, @handle, or URL" : "Video title or URL"}
-              />
+              <div className="searchInput">
+                <input
+                  ref={searchInputRef}
+                  aria-label="Search query"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={searchType === "channel" ? "Channel name, @handle, or URL" : "Video title or URL"}
+                />
+                {query ? (
+                  <button
+                    className="iconButton"
+                    type="button"
+                    aria-label="Clear search"
+                    title="Clear search"
+                    onClick={() => {
+                      setQuery("");
+                      searchInputRef.current?.focus();
+                    }}
+                  >
+                    <X aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
               <div className="segmentedControl" aria-label="Search type">
                 <button type="button" className={searchType === "video" ? "active" : ""} onClick={() => setSearchType("video")}>
                   Videos
@@ -1266,11 +1328,12 @@ function DesktopApp() {
                   Channels
                 </button>
               </div>
-              <button className="primaryButton" type="submit">
+              <button className="primaryButton" type="submit" disabled={searching} aria-busy={searching}>
                 <Search aria-hidden="true" />
-                Search
+                {searching ? "Searching…" : "Search"}
               </button>
             </form>
+            {searching && !results.length ? <LoadingState label="Searching videos and channels…" /> : null}
             <div className="resultList">
               {results.map((result) =>
                 result.type === "channel" ? (
@@ -1344,7 +1407,11 @@ function DesktopApp() {
                 {bulkImporting ? "Importing" : "Import Channels"}
               </button>
             </div>
-            {data.channels.length ? (
+            {data.initialLoading && !data.channels.length ? (
+              <LoadingState label="Loading channels…" />
+            ) : data.initialError && !data.channels.length ? (
+              <EmptyState title="Could not load channels" body={data.initialError} />
+            ) : data.channels.length ? (
               <div className="channelList">
                 {data.channels.map((channel) => (
                   <article
@@ -2046,14 +2113,32 @@ function TvApp() {
         {section === "search" ? (
           <section>
             <form className="tvSearch" onSubmit={onSearch}>
-              <input
-                value={query}
-                onFocus={() => setTvKeyboardTarget("search")}
-                onClick={() => setTvKeyboardTarget("search")}
-                placeholder="Video title or URL"
-                readOnly
-                data-tv-focusable="true"
-              />
+              <div className="searchInput">
+                <input
+                  aria-label="Search query"
+                  value={query}
+                  onFocus={() => setTvKeyboardTarget("search")}
+                  onClick={() => setTvKeyboardTarget("search")}
+                  placeholder="Video title or URL"
+                  readOnly
+                  data-tv-focusable="true"
+                />
+                {query ? (
+                  <button
+                    className="iconButton"
+                    type="button"
+                    aria-label="Clear search"
+                    title="Clear search"
+                    data-tv-focusable="true"
+                    onClick={() => {
+                      setQuery("");
+                      setTvKeyboardTarget("search");
+                    }}
+                  >
+                    <X aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
               <button className="primaryButton" type="submit" data-tv-focusable="true">
                 <Search aria-hidden="true" />
                 Search

@@ -1,4 +1,4 @@
-import { ArrowLeft, CaptionsOff, FastForward, LogIn, Maximize2, Minimize2, Pause, Play, Rewind } from "lucide-react";
+import { ArrowLeft, FastForward, LogIn, Maximize2, Minimize2, Pause, Play, Rewind } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatDate, formatDuration } from "../lib/format";
 import { focusNearestTvElement, focusTvElement, type TvDirectionKey } from "../lib/tvFocus";
@@ -31,7 +31,6 @@ declare global {
     onYouTubeIframeAPIReady?: () => void;
     GoTubeNative?: {
       setKeepScreenOn: (enabled: boolean) => void;
-      toggleCaptions?: () => void;
       openYouTubeSignIn?: () => void;
       exitApp?: () => void;
     };
@@ -45,6 +44,7 @@ interface YouTubePlayer {
   getCurrentTime: () => number;
   getDuration: () => number;
   getPlayerState: () => number;
+  getOptions?: () => string[];
   unloadModule?: (module: string) => void;
   destroy: () => void;
 }
@@ -246,19 +246,6 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
     const player = playerRef.current;
     player?.unloadModule?.("captions");
     player?.unloadModule?.("cc");
-  }
-
-  function turnCaptionsOff() {
-    if (useDirectTvEmbed && window.GoTubeNative?.toggleCaptions) {
-      try {
-        window.GoTubeNative.toggleCaptions();
-      } catch {
-        sendCaptionsOffCommand();
-      }
-      return;
-    }
-
-    sendCaptionsOffCommand();
   }
 
   function scheduleTvCaptionsOff() {
@@ -592,6 +579,20 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
   useEffect(() => {
     let disposed = false;
+    let initialCaptionsOffApplied = false;
+    let captionsStartupTimeout: number | null = null;
+
+    function turnInitialCaptionsOff() {
+      const player = playerRef.current;
+      if (disposed || initialCaptionsOffApplied || !player?.unloadModule || !player.getOptions?.().includes("captions")) {
+        return;
+      }
+
+      // Wait for the caption module, then disable it once. Later manual CC
+      // changes belong to the viewer, including when the module loads again.
+      initialCaptionsOffApplied = true;
+      sendCaptionsOffCommand();
+    }
 
     if (useDirectTvEmbed) {
       directPlaybackRef.current = {
@@ -633,18 +634,33 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
             setReady(true);
             setCurrentSeconds(currentProgressSeconds());
             setDurationSeconds(currentDurationSeconds());
+            turnInitialCaptionsOff();
           },
           onStateChange: (event) => {
             logPlayerEvent("state", event.data);
             setPlaying(event.data === window.YT?.PlayerState.PLAYING);
             updateProgressState();
+            if (event.data === window.YT?.PlayerState.PLAYING) {
+              turnInitialCaptionsOff();
+              if (!initialCaptionsOffApplied && captionsStartupTimeout === null) {
+                captionsStartupTimeout = window.setTimeout(() => {
+                  turnInitialCaptionsOff();
+                  // A video that starts without a caption module should still
+                  // let the viewer enable captions later.
+                  initialCaptionsOffApplied = true;
+                }, 2600);
+              }
+            }
             if (event.data === window.YT?.PlayerState.ENDED) {
               saveCurrentProgress(true);
             } else if (event.data === window.YT?.PlayerState.PAUSED) {
               saveCurrentProgress(false);
             }
           },
-          onApiChange: () => logPlayerEvent("api-change"),
+          onApiChange: () => {
+            logPlayerEvent("api-change");
+            turnInitialCaptionsOff();
+          },
           onAutoplayBlocked: () => logPlayerEvent("autoplay-blocked")
         }
       });
@@ -652,6 +668,9 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
 
     return () => {
       disposed = true;
+      if (captionsStartupTimeout !== null) {
+        window.clearTimeout(captionsStartupTimeout);
+      }
       setReady(false);
       saveCurrentProgress(false);
       playerRef.current?.destroy();
@@ -962,25 +981,14 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
       ref={overlayRef}
     >
       <div className="playerTopbar">
-        <button className="primaryButton" onClick={onClose} data-tv-focusable={tvMode ? "true" : undefined}>
+        <button className={tvMode ? "primaryButton" : "playerBackButton"} onClick={onClose} data-tv-focusable={tvMode ? "true" : undefined}>
           <ArrowLeft aria-hidden="true" />
-          Back to GoTube
+          {tvMode ? "Back to GoTube" : "Back"}
         </button>
         <div className="playerTitleBlock">
           <strong>{video.title}</strong>
           {video.channel_title ? <span>{video.channel_title}</span> : null}
         </div>
-        <button
-          className="iconButton"
-          aria-label={playing ? "Pause" : "Play"}
-          title={playing ? "Pause" : "Play"}
-          onClick={togglePlayback}
-          data-tv-focusable={tvMode ? "true" : undefined}
-          data-tv-player-tap={tvMode ? "true" : undefined}
-          data-tv-player-direct={useDirectTvEmbed ? "true" : undefined}
-        >
-          {playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
-        </button>
       </div>
       <div className="playerSurface">
         <div
@@ -1065,17 +1073,6 @@ export function PlayerOverlay({ video, tvMode = false, onClose, onProgress, onCh
               >
                 <FastForward aria-hidden="true" />
                 30s
-              </button>
-              <button
-                className="secondaryButton"
-                type="button"
-                onClick={turnCaptionsOff}
-                data-tv-focusable="true"
-                data-tv-player-control="true"
-                disabled={!ready}
-              >
-                <CaptionsOff aria-hidden="true" />
-                CC Off
               </button>
               <button
                 className="secondaryButton"

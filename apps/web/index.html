@@ -18,18 +18,53 @@
         position: fixed;
         inset: 0;
         z-index: 9999;
-        background: #02050b url("/brand/gotube-splash.svg") center / cover no-repeat;
+        display: grid;
+        place-items: center;
+        background: #02050b;
         transition: opacity 220ms ease, visibility 220ms ease;
+      }
+
+      .splashBrand {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        width: min(320px, 76vw);
+      }
+
+      .splashLogo {
+        width: 100%;
+        aspect-ratio: 720 / 456;
+        object-fit: cover;
+      }
+
+      .goTubePulse {
+        animation: goTubeHeartbeat 1s ease-in-out infinite;
+        transform-origin: center;
+      }
+
+      @keyframes goTubeHeartbeat {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.06); }
       }
 
       #boot-splash.bootSplashHidden {
         opacity: 0;
         visibility: hidden;
       }
+
+      @media (prefers-reduced-motion: reduce) {
+        .goTubePulse { animation: none; }
+        #boot-splash { transition: none; }
+      }
     </style>
   </head>
   <body>
-    <div id="boot-splash" aria-hidden="true"></div>
+    <div id="boot-splash" role="status" aria-label="Loading GoTube">
+      <div class="splashBrand">
+        <img class="splashLogo goTubePulse" src="/brand/gotube-mark-blue-transparent.svg" alt="" />
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

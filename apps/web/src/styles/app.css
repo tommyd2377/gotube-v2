@@ -84,6 +84,18 @@ svg {
   flex: 0 0 auto;
 }
 
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  :where(.appShell, .playerOverlay:not(.playerOverlayTv))
+    :is(button, .tvLink, .fileButton, .personalFooterLinks a) > svg:not(.spinIcon) {
+    transition: transform 160ms ease;
+  }
+
+  :where(.appShell, .playerOverlay:not(.playerOverlayTv))
+    :is(button, .tvLink, .fileButton, .personalFooterLinks a):not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]):hover > svg:not(.spinIcon) {
+    transform: translateX(-2px);
+  }
+}
+
 .appShell {
   width: min(1280px, calc(100% - 40px));
   min-height: 100vh;
@@ -129,6 +141,7 @@ svg {
 .brandMark {
   display: grid;
   place-items: center;
+  flex-shrink: 0;
   width: 54px;
   height: 54px;
   background: transparent;
@@ -214,6 +227,28 @@ svg {
 
 .spinIcon {
   animation: spin 0.9s linear infinite;
+}
+
+.loadingState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 200px;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.loadingLogo {
+  width: 128px;
+  height: 82px;
+  object-fit: cover;
+}
+
+.loadingState p {
+  margin: 0;
 }
 
 @keyframes spin {
@@ -562,12 +597,79 @@ svg {
   margin-top: auto;
 }
 
+.appShell :is(.primaryButton, .secondaryButton, .dangerButton, .fileButton, .tvLink, .iconButton, .tab, .backToTopButton, .backLinkButton, .segmentedControl button, .personalFooterLinks a) {
+  gap: 10px;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 999px;
+  font-weight: 650;
+}
+
+.appShell :is(.secondaryButton, .fileButton, .iconButton, .tab:not(.active), .backLinkButton, .personalFooterLinks a) {
+  color: var(--text);
+  background: linear-gradient(135deg, #162238, var(--panel-strong));
+  border-color: var(--border-bright);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.appShell .dangerButton {
+  background: linear-gradient(135deg, var(--danger-bg), #260d17);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.appShell .backLinkButton {
+  min-height: 46px;
+  padding: 0 16px;
+}
+
+.appShell .segmentedControl {
+  border-radius: 999px;
+}
+
+.appShell :is(button, a):not(:disabled):focus-visible,
+.appShell .fileButton:focus-within {
+  border-color: var(--blue-bright);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.42);
+}
+
+@media (hover: hover) {
+  .appShell :is(.secondaryButton, .fileButton, .iconButton, .tab:not(.active), .backLinkButton, .personalFooterLinks a):not(:disabled):hover {
+    background: #1b2d49;
+    border-color: var(--blue-bright);
+  }
+
+  .appShell .dangerButton:not(:disabled):hover {
+    background: #481420;
+    border-color: #b65a6b;
+  }
+}
+
 .searchForm,
 .tvSearch {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) auto auto;
   gap: 10px;
   margin-bottom: 18px;
+}
+
+.searchInput {
+  position: relative;
+  min-width: 0;
+}
+
+.searchInput input {
+  padding-right: 56px;
+}
+
+.searchInput .iconButton {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border: 0;
+  background: transparent;
 }
 
 input {
@@ -828,7 +930,7 @@ textarea::placeholder {
 
 .playerTopbar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 14px;
 }
@@ -844,6 +946,49 @@ textarea::placeholder {
 .playerTopbar span {
   color: var(--muted);
   margin-top: 4px;
+}
+
+.playerBackButton {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 10px;
+  min-height: 46px;
+  padding: 6px 18px 6px 8px;
+  color: var(--text);
+  background: linear-gradient(135deg, #162238, var(--panel-strong));
+  border: 1px solid var(--border-bright);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  font-weight: 650;
+  white-space: nowrap;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.playerBackButton svg {
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  color: var(--blue-bright);
+  background: rgba(59, 130, 246, 0.14);
+  border-radius: 50%;
+}
+
+@media (hover: hover) {
+  .playerBackButton:hover {
+    background: #1b2d49;
+    border-color: var(--blue-bright);
+  }
+}
+
+.playerBackButton:active {
+  background: #0c1424;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playerBackButton {
+    transition: none;
+  }
 }
 
 .playerFrame {
@@ -1524,10 +1669,31 @@ textarea::placeholder {
     padding-bottom: 36px;
   }
 
-  .appHeader,
   .sectionHeader {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .appHeader {
+    gap: 12px;
+  }
+
+  .appHeader .brandHomeButton {
+    flex: 1;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .appHeader .brandHomeButton > div:last-child {
+    min-width: 0;
+  }
+
+  .appHeader .tvLink {
+    flex: 0 0 auto;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: 0.85rem;
   }
 
   .brandMark {
@@ -1537,15 +1703,19 @@ textarea::placeholder {
   }
 
   .tabBar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: visible;
     padding-bottom: 18px;
-    scroll-snap-type: x proximity;
   }
 
-  .tab {
-    flex: 0 0 auto;
+  .appShell .tab {
+    gap: 4px;
+    min-width: 0;
     min-height: 44px;
-    padding: 0 14px;
-    scroll-snap-align: start;
+    padding: 8px 4px;
+    font-size: 0.85rem;
+    white-space: nowrap;
   }
 
   .content {
@@ -1558,6 +1728,19 @@ textarea::placeholder {
 
   .sectionHeader p {
     font-size: 1rem;
+  }
+
+  .sectionActions {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .sectionActions > button {
+    min-width: 0;
+    padding: 10px 8px;
+    white-space: normal;
   }
 
   .searchForm {
@@ -1590,7 +1773,7 @@ textarea::placeholder {
     top: 0;
     z-index: 2;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 48px;
+    grid-template-columns: minmax(0, 1fr);
     gap: 10px;
     padding-bottom: 2px;
     background: #02050b;
@@ -1598,17 +1781,6 @@ textarea::placeholder {
 
   .playerOverlay:not(.playerOverlayTv) .playerTitleBlock {
     display: none;
-  }
-
-  .playerOverlay:not(.playerOverlayTv) .playerTopbar .primaryButton {
-    min-height: 48px;
-    justify-content: flex-start;
-  }
-
-  .playerOverlay:not(.playerOverlayTv) .playerTopbar .iconButton {
-    width: 48px;
-    height: 48px;
-    min-height: 48px;
   }
 
   .playerOverlay:not(.playerOverlayTv) .playerFrame {
@@ -1638,6 +1810,13 @@ textarea::placeholder {
 
   .playerOverlay:not(.playerOverlayTv) .playerDescription {
     line-height: 1.52;
+  }
+}
+
+@media (max-width: 374px) {
+  .tab {
+    flex-direction: column;
+    min-height: 60px;
   }
 }
 
