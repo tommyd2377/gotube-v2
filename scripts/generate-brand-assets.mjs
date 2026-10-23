@@ -215,8 +215,10 @@ await renderPng(og, "apps/web/public/og-image.png", 1200, 630);
 // Web branding can be updated while a Fire TV release is intentionally deferred.
 if (!WEB_ONLY) {
   await fs.mkdir(FIRETV_DRAWABLE_NODPI, { recursive: true });
+  await renderPng(fireTvLauncher, "apps/firetv/src/main/res/drawable-nodpi/gotube_launcher_square_v28.png", 512);
   await copyFile(path.join(WEB_PUBLIC, "brand/gotube-tv-banner-1920x1080.png"), path.join(FIRETV_DRAWABLE_NODPI, "gotube_tv_banner.png"));
-  await copyFile(path.join(WEB_PUBLIC, "brand/gotube-splash-3840x2160.png"), path.join(FIRETV_DRAWABLE_NODPI, "gotube_splash.png"));
+  const nativeSplash = `<svg width="720" height="456" viewBox="152 284 720 456" xmlns="http://www.w3.org/2000/svg">${defs()}${logoMark()}</svg>`;
+  await renderPng(nativeSplash, "apps/firetv/src/main/res/drawable-nodpi/gotube_splash.png", 720, 456);
 
   await fs.rm(path.join(FIRETV_DRAWABLE_NODPI, "gotube_launcher_icon.png"), { force: true });
   await fs.rm(path.join(FIRETV_DRAWABLE_NODPI, "gotube_launcher_banner.png"), { force: true });

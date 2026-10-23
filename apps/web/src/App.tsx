@@ -1577,11 +1577,15 @@ function DesktopApp() {
 
 function TvApp() {
   const data = useGoTubeData();
+  useEffect(() => {
+    if (data.cacheReady) window.dispatchEvent(new Event("gotube:app-ready"));
+  }, [data.cacheReady]);
   const [section, setSection] = useState<TvSection>("feed");
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [channelFeed, setChannelFeed] = useState<Video[]>([]);
   const [channelFeedCursor, setChannelFeedCursor] = useState<string | null>(null);
@@ -1919,12 +1923,16 @@ function TvApp() {
       setResults([]);
       return;
     }
+    if (searching) return;
+    setSearching(true);
     try {
       const response = await api.search(query.trim(), "video");
       setResults(response.results);
       data.setNotice("Search complete.");
     } catch (cause) {
       data.setNotice(describeError(cause));
+    } finally {
+      setSearching(false);
     }
   }
 
@@ -1946,7 +1954,10 @@ function TvApp() {
             <img className="brandMarkImage" src="/brand/gotube-icon.svg" alt="" aria-hidden="true" />
           </div>
           <div>
-            <p className="eyebrow">GoTube TV</p>
+            <p className="eyebrow tvBrandLabel">
+              <img src="/brand/gotube-wordmark.svg" alt="GoTube" width="135" height="28" />
+              <span>TV</span>
+            </p>
             <h1>
               {section === "feed"
                 ? "Feed"
@@ -2021,7 +2032,11 @@ function TvApp() {
 
       <main className="tvContent">
         {section === "feed" ? (
-          data.feed.length ? (
+          data.initialLoading && !data.feed.length ? (
+            <LoadingState label="Loading videos…" />
+          ) : data.initialError && !data.feed.length ? (
+            <EmptyState title="Could not load videos" body={data.initialError} />
+          ) : data.feed.length ? (
             <>
               <div className="tvGrid" data-tv-grid="feed">
                 {data.feed.map((video) => (
@@ -2058,7 +2073,11 @@ function TvApp() {
         ) : null}
 
         {section === "watchLater" ? (
-          watchLaterVideos.length ? (
+          data.initialLoading && !watchLaterVideos.length ? (
+            <LoadingState label="Loading saved videos…" />
+          ) : data.initialError && !watchLaterVideos.length ? (
+            <EmptyState title="Could not load saved videos" body={data.initialError} />
+          ) : watchLaterVideos.length ? (
             <div className="tvGrid">
               {watchLaterVideos.map((video) => (
                 <VideoCard
@@ -2080,7 +2099,11 @@ function TvApp() {
         ) : null}
 
         {section === "history" ? (
-          data.historyVideos.length ? (
+          data.initialLoading && !data.historyVideos.length ? (
+            <LoadingState label="Loading history…" />
+          ) : data.initialError && !data.historyVideos.length ? (
+            <EmptyState title="Could not load history" body={data.initialError} />
+          ) : data.historyVideos.length ? (
             <>
               <div className="tvGrid" data-tv-grid="history">
                 {data.historyVideos.slice(0, historyVisibleCount).map((video) => (
@@ -2139,11 +2162,12 @@ function TvApp() {
                   </button>
                 ) : null}
               </div>
-              <button className="primaryButton" type="submit" data-tv-focusable="true">
+              <button className="primaryButton" type="submit" aria-disabled={searching} aria-busy={searching} data-tv-focusable="true">
                 <Search aria-hidden="true" />
-                Search
+                {searching ? "Searching…" : "Search"}
               </button>
             </form>
+            {searching && !results.length ? <LoadingState label="Searching videos…" /> : null}
             <div className="tvGrid">
               {results
                 .filter((result): result is SearchVideoResult => result.type === "video")
@@ -2163,7 +2187,11 @@ function TvApp() {
         ) : null}
 
         {section === "channels" ? (
-          data.channels.length ? (
+          data.initialLoading && !data.channels.length ? (
+            <LoadingState label="Loading channels…" />
+          ) : data.initialError && !data.channels.length ? (
+            <EmptyState title="Could not load channels" body={data.initialError} />
+          ) : data.channels.length ? (
             <div className="tvChannelList">
               {data.channels.map((channel) => (
                 <article
@@ -2224,7 +2252,9 @@ function TvApp() {
                 {channelFeedLoading ? "Syncing" : "Sync Channel"}
               </button>
             </div>
-            {channelFeed.length ? (
+            {channelFeedLoading && !channelFeed.length ? (
+              <LoadingState label="Loading videos…" />
+            ) : channelFeed.length ? (
               <>
                 <div className="tvGrid" data-tv-grid="channelFeed">
                   {channelFeed.map((video) => (

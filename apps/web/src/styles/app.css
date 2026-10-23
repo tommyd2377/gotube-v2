@@ -1158,6 +1158,16 @@ textarea::placeholder {
   background: #02050b;
 }
 
+.tvShell :is(.primaryButton, .secondaryButton, .dangerButton, .iconButton, .tvNav button) {
+  border-radius: 999px;
+}
+
+.tvShell :is(.secondaryButton, .iconButton, .tvNav button:not(.active)) {
+  background: linear-gradient(135deg, #162238, var(--panel-strong));
+  border-color: var(--border-bright);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
 .tvShell [data-tv-focusable="true"] {
   scroll-margin: 18px;
   transition:
@@ -1193,6 +1203,17 @@ textarea::placeholder {
   margin: 0;
   font-size: clamp(1.7rem, 2.9vw, 3.15rem);
   line-height: 1;
+}
+
+.tvBrandLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tvBrandLabel img {
+  width: auto;
+  height: 20px;
 }
 
 .tvHeaderActions {

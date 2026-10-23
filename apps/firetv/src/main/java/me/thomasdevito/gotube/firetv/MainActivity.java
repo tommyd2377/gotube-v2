@@ -1,6 +1,9 @@
 package me.thomasdevito.gotube.firetv27;
 
 import android.annotation.SuppressLint;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Color;
@@ -10,10 +13,12 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.webkit.CookieManager;
 import android.webkit.ConsoleMessage;
 import android.webkit.JavascriptInterface;
@@ -44,7 +49,8 @@ public final class MainActivity extends Activity {
 
   private WebView webView;
   private FrameLayout rootView;
-  private ImageView splashView;
+  private FrameLayout splashView;
+  private AnimatorSet splashPulse;
   private long splashStartedAtMillis;
   private String allowedTopLevelHost = LOCAL_HOST;
   private String appStartUrl = LOCAL_ORIGIN + "/tv?nativeShell=firetv";
@@ -76,17 +82,34 @@ public final class MainActivity extends Activity {
       FrameLayout.LayoutParams.MATCH_PARENT
     ));
 
-    splashView = new ImageView(this);
+    splashView = new FrameLayout(this);
     splashStartedAtMillis = SystemClock.uptimeMillis();
     splashView.setBackgroundColor(Color.rgb(2, 5, 11));
-    splashView.setImageResource(R.drawable.gotube_splash);
-    splashView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+    ImageView splashLogo = new ImageView(this);
+    splashLogo.setImageResource(R.drawable.gotube_splash);
+    splashLogo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    int logoWidth = Math.min(Math.round(320 * getResources().getDisplayMetrics().density),
+      Math.round(getResources().getDisplayMetrics().widthPixels * 0.76f));
+    splashView.addView(splashLogo, new FrameLayout.LayoutParams(
+      logoWidth, Math.round(logoWidth * 456f / 720f), Gravity.CENTER
+    ));
     rootView.addView(splashView, new FrameLayout.LayoutParams(
       FrameLayout.LayoutParams.MATCH_PARENT,
       FrameLayout.LayoutParams.MATCH_PARENT
     ));
 
     setContentView(rootView);
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || ValueAnimator.areAnimatorsEnabled()) {
+      ObjectAnimator pulseX = ObjectAnimator.ofFloat(splashLogo, "scaleX", 1f, 1.06f, 1f);
+      ObjectAnimator pulseY = ObjectAnimator.ofFloat(splashLogo, "scaleY", 1f, 1.06f, 1f);
+      pulseX.setRepeatCount(ValueAnimator.INFINITE);
+      pulseY.setRepeatCount(ValueAnimator.INFINITE);
+      splashPulse = new AnimatorSet();
+      splashPulse.playTogether(pulseX, pulseY);
+      splashPulse.setDuration(1000);
+      splashPulse.setInterpolator(new AccelerateDecelerateInterpolator());
+      splashPulse.start();
+    }
     webView.loadUrl(startUrl);
   }
 
@@ -247,16 +270,24 @@ public final class MainActivity extends Activity {
       webView.destroy();
       webView = null;
     }
+    stopSplashPulse();
     splashView = null;
     rootView = null;
     super.onDestroy();
+  }
+
+  private void stopSplashPulse() {
+    if (splashPulse != null) {
+      splashPulse.cancel();
+      splashPulse = null;
+    }
   }
 
   private void hideSplash() {
     if (rootView == null || splashView == null) {
       return;
     }
-    final ImageView view = splashView;
+    final FrameLayout view = splashView;
     long remainingSplashMillis = Math.max(0, 1000 - (SystemClock.uptimeMillis() - splashStartedAtMillis));
     splashView = null;
     view.postDelayed(new Runnable() {
@@ -268,6 +299,7 @@ public final class MainActivity extends Activity {
           .withEndAction(new Runnable() {
             @Override
             public void run() {
+              stopSplashPulse();
               if (rootView != null) {
                 rootView.removeView(view);
               }
